@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+data/*.parquet
+data/raw/
+logs/*.log
+jobs/*.json.out
+wandb/
+outputs/
+*.egg-info/

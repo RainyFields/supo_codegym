@@ -1,0 +1,2 @@
+- name: supo_agent
+  _target_: supo.agent_loop.SupoAgentLoop
