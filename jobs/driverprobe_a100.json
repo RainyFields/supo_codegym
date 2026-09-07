@@ -1,0 +1,58 @@
+{
+ "name": "supo-codegym-driverprobe-a100",
+ "namespace": "/user/xiaoxuan.lei",
+ "job_type": "train",
+ "description": "1-GPU driver/OS probe (nvidia-smi), exits immediately",
+ "attachments": [
+  {
+   "kind": "hdfs_volume",
+   "hdfs_volume_attachment": {
+    "hdfs_volumes": [
+     {
+      "access_mode": "RW",
+      "extra": "",
+      "mnt": "/mnt/hdfs/mlsys",
+      "path": "hdfs://harunava/home/byte_arnold_va_ssd/mlsys",
+      "roles": [
+       "worker"
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "job_config": {
+  "job_template_config": {
+   "entrypoint_full_script": "nvidia-smi; cat /proc/driver/nvidia/version; cat /etc/os-release | head -4; ls -d /usr/local/cuda*; ls /usr/local/cuda/compat 2>/dev/null; ldconfig -p | grep libcuda.so; hostname; exit 0",
+   "git_repo": {
+    "repo_name": ""
+   },
+   "image_meta": {
+    "image_source": "url",
+    "image_url": "aliyun-va-hub.byted.org/arnold/modelchef-gpu:1.0.0.38"
+   },
+   "env_map": {}
+  }
+ },
+ "resource_config": {
+  "resource_backend": "arnold",
+  "arnold_resource_config": {
+   "cluster_ids": [
+    4
+   ],
+   "cluster_select_mode": "single",
+   "group_id": 765,
+   "roles": [
+    {
+     "name": "worker",
+     "num": 1,
+     "gpu": 1,
+     "gpu_type": "A100_SXM_80GB",
+     "cpu": 12,
+     "memory_mb": 193024,
+     "queue_name": "compute-89-aliyun.va-cloudnative-ai-ark.eng.algorithm-guarantee"
+    }
+   ]
+  }
+ }
+}

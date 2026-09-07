@@ -1,2 +1,4 @@
 submitted_sf	name	sid	url	gpu	spec	note
 2026-09-07 14:56	supo-codegym-supo_smoke-h100	510a802886e902f6	https://ml.tiktok-row.net/development/instance/jobs/510a802886e902f6	H100_SXM_80GB	jobs/supo_smoke_h100.json	smoke 2 steps
+2026-09-07 15:13	supo-codegym-driverprobe-h100	f91e965081e67510	https://ml.tiktok-row.net/development/instance/jobs/f91e965081e67510	H100_SXM_80GB	jobs/driverprobe_h100.json	
+2026-09-07 15:14	supo-codegym-driverprobe-a100	9c2ce59cecd0abc0	https://ml.tiktok-row.net/development/instance/jobs/9c2ce59cecd0abc0	A100_SXM_80GB	jobs/driverprobe_a100.json	

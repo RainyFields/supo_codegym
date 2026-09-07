@@ -26,7 +26,7 @@ jobs/                     generated job specs + JOBS.tsv ledger
 
 ## Environment
 
-* venv `~/xiaoxuan/envs/supo` (py3.12; verl HEAD `d040717` + patch; torch 2.11+cu130, vLLM 0.24,
+* venv `~/xiaoxuan/envs/supo` (py3.12; verl HEAD `d040717` + patch; **torch 2.11+cu129**, vLLM 0.24+cu129,
   transformers 5.9, flash-attn 2.8.3, flash-linear-attention 0.5.2, gymnasium) — built with
   `UV_PROJECT_ENVIRONMENT=~/xiaoxuan/envs/supo uv sync --frozen --python 3.12 --extra fsdp --extra vllm`
   inside `~/xiaoxuan/external/verl`, then `uv pip install -e ~/xiaoxuan/supo_codegym gymnasium`.
@@ -55,3 +55,24 @@ python3 scripts/analyze_timing.py /mnt/hdfs/mlsys/users/xiaoxuan/supo_codegym/jo
 
 Artifacts live on HDFS under `/mnt/hdfs/mlsys/users/xiaoxuan/supo_codegym/` (checkpoints,
 rollout dumps, validation dumps, job logs).
+
+### CUDA note (2026-09-07): pods run driver R535 → cu129, not cu130
+Both ark queues (H100 535.129.03, A100 535.161.08, Debian 12 image, `/usr/local/cuda-12.9/compat`
+libcuda 575.57.08) expose CUDA driver API **12.9** — CUDA 13 forward-compat needs R570+, so verl
+HEAD's default cu130 stack fails at `torch.cuda` init ("driver too old", job 510a802886e902f6).
+The venv was rebuilt in place (old one kept at `~/xiaoxuan/envs/supo-cu130`):
+```
+cp -a envs/supo envs/supo-cu129
+uv pip install --python envs/supo-cu129/bin/python --reinstall --index-url https://download.pytorch.org/whl/cu129 \
+   --extra-index-url https://bytedpypi.byted.org/simple/ --index-strategy unsafe-best-match \
+   torch==2.11.0+cu129 torchvision==0.26.0+cu129 torchaudio==2.11.0+cu129
+uv pip install --no-deps vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl   # GitHub release asset
+uv pip install cupy-cuda12x==14.0.1 'cuda-python==12.9.*'
+uv pip uninstall cupy-cuda13x cuda-toolkit nvidia-*-cu13 nvidia-cublas ... (all unsuffixed cu13 libs)
+uv pip install --reinstall <every remaining nvidia-*-cu12 pkg>   # cu13 uninstall clobbers shared .so names
+uv pip uninstall flash_attn                                       # wheelhouse wheel links libcudart.so.13
+```
+flash-attn 2.8.3 has no cu12/torch-2.11 wheel anywhere (official, verl wheelhouse, mjun0812) → the job
+entrypoint builds it once in the pod (96 cores, `FLASH_ATTN_CUDA_ARCHS=80;90`, staged CUDA 12.9 nvcc
+toolchain `job-assets/cuda-12.9-toolchain.tar.gz`) and caches it at `job-assets/wheels/cu129torch2.11/`.
+Devbox build is impractical: this workspace is cgroup-capped at 8 CPUs / 32 GB (nvcc OOM-kills).

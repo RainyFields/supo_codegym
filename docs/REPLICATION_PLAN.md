@@ -58,7 +58,7 @@ up to 8 trajectories = 32K effective) on CodeGym, replacing Qwen2.5-32B-Instruct
 
 * code: `~/xiaoxuan/supo_codegym` (this repo), patched verl: `~/xiaoxuan/external/verl` (branch `supo`,
   patch file `supo/verl_patches/0001-supo-multi-trajectory.patch` on upstream `d040717`)
-* venv: `~/xiaoxuan/envs/supo` (py3.12, torch 2.11+cu130, vllm 0.24, transformers 5.9, flash-attn 2.8.3, fla 0.5.2)
+* venv: `~/xiaoxuan/envs/supo` (py3.12, torch 2.11+cu129, vllm 0.24+cu129, transformers 5.9, flash-attn 2.8.3 built in-pod, fla 0.5.2) — see README CUDA note
 * byted-wandb overlay: `~/xiaoxuan/envs/byted-wandb-overlay` (PYTHONPATH-prepended → merlin tracking)
 * HDFS `$PROJECT_ROOT=/mnt/hdfs/mlsys/users/xiaoxuan/supo_codegym`: `data/raw`, `job-assets`,
   `job-runs/<arm>`, `checkpoints/<exp>`, `rollouts/<exp>` (jsonl dumps), `outputs/<exp>/val`
@@ -74,7 +74,6 @@ up to 8 trajectories = 32K effective) on CodeGym, replacing Qwen2.5-32B-Instruct
    or more tool calls).
 2. Dataset split re-created from the public dataset (paper's lists unreleased).
 3. Mini-batch size, per-turn token caps, observation role, summary-turn role: assumptions above.
-4. CUDA 13 wheels (torch 2.11+cu130) need driver ≥ 580 on the pod — verified only at the first
-   GPU shakeout; fallback would be rebuilding the venv on an older verl (v0.9.0) stack.
+4. RESOLVED 2026-09-07: pods run driver R535 (CUDA 12.9 API max, no CUDA-13 forward compat) → stack moved to cu129; flash-attn built in-pod and cached on HDFS.
 5. Early stop after 10 consecutive turns without a function call (masked as overlong, as the
    paper would at H) to save compute.

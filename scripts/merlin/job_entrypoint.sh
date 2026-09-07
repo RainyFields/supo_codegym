@@ -29,6 +29,26 @@ if [ ! -x "$PY" ]; then
   echo "[job] restoring venv ($(date))..."
   tar xzf "$ASSETS/envs-supo.tar.gz" -C / || { echo "[job] FATAL: venv untar failed"; exit 43; }
 fi
+# ── flash-attn 2.8.3 for torch 2.11+cu129 (pods run driver R535 = CUDA 12.9 max; no
+#    prebuilt cu12/torch2.11 wheel exists). Install the cached wheel from HDFS, else build it
+#    once here with the staged CUDA 12.9 toolchain (96 cores ≈ 10-15 min) and cache it. ─────
+FA_WHEEL_DIR=$ASSETS/wheels/cu129torch2.11; mkdir -p "$FA_WHEEL_DIR"
+FA_WHEEL=$(ls "$FA_WHEEL_DIR"/flash_attn-2.8.3*.whl 2>/dev/null | head -1)
+if ! $PY -c "import flash_attn, flash_attn_2_cuda" 2>/dev/null; then
+  if [ -z "$FA_WHEEL" ]; then
+    echo "[job] building flash-attn wheel ($(date))..."
+    mkdir -p /tmp/fa_build && cd /tmp/fa_build
+    tar xzf "$ASSETS/cuda-12.9-toolchain.tar.gz" -C /tmp/fa_build && tar xzf "$ASSETS/flash_attn-2.8.3.tar.gz"
+    ( export CUDA_HOME=/tmp/fa_build/cuda-12.9/usr/local/cuda-12.9 PATH=/tmp/fa_build/cuda-12.9/usr/local/cuda-12.9/bin:$XD/envs/supo/bin:$PATH \
+             FLASH_ATTN_CUDA_ARCHS="80;90" MAX_JOBS=${FA_MAX_JOBS:-64} NVCC_THREADS=2 FLASH_ATTENTION_FORCE_BUILD=TRUE
+      cd flash_attn-2.8.3 && $PY -m pip wheel . --no-deps --no-build-isolation -w /tmp/fa_build/out 2>&1 | grep -v "^\s*$" | tail -30 )
+    FA_WHEEL=$(ls /tmp/fa_build/out/flash_attn-2.8.3*.whl 2>/dev/null | head -1)
+    [ -n "$FA_WHEEL" ] || { echo "[job] FATAL: flash-attn build failed"; exit 46; }
+    cp "$FA_WHEEL" "$FA_WHEEL_DIR/" && FA_WHEEL="$FA_WHEEL_DIR/$(basename "$FA_WHEEL")" && echo "[job] cached $FA_WHEEL ($(date))"
+    cd /
+  fi
+  $PY -m pip install --no-deps --force-reinstall "$FA_WHEEL" 2>&1 | tail -1 || { echo "[job] FATAL: flash-attn install failed"; exit 46; }
+fi
 # ── byted-wandb overlay -> merlin tracking ──────────────────────────────────
 if [ ! -d "$XD/envs/byted-wandb-overlay/wandb" ]; then
   tar xzf "$ASSETS/byted-wandb-overlay.tar.gz" -C "$XD/envs" || echo "[job] WARN: overlay untar failed (wandb would go offline)"
@@ -53,7 +73,7 @@ export MIN_GPUS=${MIN_GPUS:-8}
 $PY - <<'PYEOF'
 import os, sys, socket, torch
 n = torch.cuda.device_count()
-print(f"[job] preflight node={socket.gethostname()} torch={torch.__version__} cuda={torch.version.cuda} gpus={n}", flush=True)
+print(f"[job] preflight node={socket.gethostname()} torch={torch.__version__} cuda={torch.version.cuda} gpus={n} driver_api={torch.cuda.driver_version() if hasattr(torch.cuda, 'driver_version') else '?'}", flush=True)
 need = int(os.environ.get("MIN_GPUS", "8"))
 if n < need:
     sys.exit(f"[job] preflight FAILED: only {n} GPUs visible (need {need})")
@@ -62,6 +82,7 @@ from vllm.platforms import current_platform
 if not current_platform.is_cuda():
     sys.exit(f"[job] preflight FAILED: vLLM platform {current_platform.device_type!r}")
 import flash_attn, fla, supo.agent_loop  # noqa
+from flash_attn import flash_attn_varlen_func  # cu129 build must load
 print("[job] preflight OK", flush=True)
 PYEOF
 rc=$?; [ $rc -ne 0 ] && { echo "[job] exiting 42 for reschedule"; exit 42; }
