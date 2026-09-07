@@ -1,1 +1,2 @@
 submitted_sf	name	sid	url	gpu	spec	note
+2026-09-07 14:56	supo-codegym-supo_smoke-h100	510a802886e902f6	https://ml.tiktok-row.net/development/instance/jobs/510a802886e902f6	H100_SXM_80GB	jobs/supo_smoke_h100.json	smoke 2 steps
