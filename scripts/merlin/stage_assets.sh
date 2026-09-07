@@ -4,6 +4,7 @@
 # (see logs/stage_venv.log; rebuild with /tmp/supo_stage/stage_venv.sh only when the venv changes).
 set -euo pipefail
 H=/opt/tiger/yarn_deploy/hadoop/bin/hdfs
+export HADOOP_OPTS="-Djava.net.preferIPv4Stack=false -Djava.net.preferIPv6Addresses=true" HADOOP_CLIENT_OPTS="-Djava.net.preferIPv4Stack=false -Djava.net.preferIPv6Addresses=true"  # hadoop-env.sh pins preferIPv4Stack=true -> "Protocol family unavailable" on IPv6 namenode failover
 DST=hdfs://harunava/home/byte_arnold_va_ssd/mlsys/users/xiaoxuan/supo_codegym/job-assets
 TMP=/tmp/supo_stage; mkdir -p $TMP
 cd /
