@@ -31,8 +31,16 @@ _upload_dir() {  # $1 = step N
   local t0=$(date +%s) bytes=$(du -sb "$src" | cut -f1)
   _rm_retry "$dst"
   if [ "${SYNC_MODE:-cli}" = cli ]; then
+    # per-file put with 3 attempts alternating the JVM IP-stack flags (datanodes answer on IPv4 or
+    # IPv6 and the JVM picks one stack; "Protocol family unavailable" is the symptom). First error kept.
+    export _PUT_SRC="$src" _PUT_URI="$uri" _PUT_ERR="/tmp/supo_put_err.$$"; rm -f "$_PUT_ERR"
     ( cd "$src" && find . -type d | sed 's|^\./||' | grep -v '^\.$' | sed "s|^|$uri/|" | xargs -r "$H" dfs -mkdir -p >/dev/null 2>&1
-      find . -type f | sed 's|^\./||' | xargs -r -P $PUT_PAR -I{} sh -c "$H dfs -put -f \"$src/{}\" \"$uri/{}\" >/dev/null 2>&1 || echo PUTFAIL {}" ) | grep -c PUTFAIL | grep -q '^0$' || { _log "cli upload had failures, falling back to fuse cp"; _fuse_copy "$src" "$dst"; }
+      find . -type f | sed 's|^\./||' | xargs -r -P $PUT_PAR -I{} bash -c '
+        f="$1"; H="$2"; ok=0
+        for flags in "-Djava.net.preferIPv4Stack=false -Djava.net.preferIPv6Addresses=true" "-Djava.net.preferIPv4Stack=true" "-Djava.net.preferIPv4Stack=false -Djava.net.preferIPv6Addresses=true"; do
+          HADOOP_OPTS="$flags" HADOOP_CLIENT_OPTS="$flags" "$H" dfs -put -f "$_PUT_SRC/$f" "$_PUT_URI/$f" >/tmp/supo_put_$$.log 2>&1 && { ok=1; break; }
+          [ -s "$_PUT_ERR" ] || grep -v "lock\|WARN\|^\s*at " /tmp/supo_put_$$.log | tail -2 > "$_PUT_ERR"
+        done; rm -f /tmp/supo_put_$$.log; [ $ok = 1 ] || echo "PUTFAIL $f"' _ {} "$H" ) | grep -c PUTFAIL | grep -q '^0$' || { _log "cli upload had failures ($(head -c 300 "$_PUT_ERR" 2>/dev/null | tr '\n' ' ')), falling back to fuse cp"; _fuse_copy "$src" "$dst"; }
   else
     _fuse_copy "$src" "$dst"
   fi
