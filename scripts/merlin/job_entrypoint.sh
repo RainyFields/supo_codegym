@@ -95,6 +95,9 @@ export HDFS_CKPT=$PROJECT_ROOT/checkpoints/$EXP_NAME
 export HDFS_CKPT_URI=hdfs://harunava/home/byte_arnold_va_ssd/mlsys/users/xiaoxuan/supo_codegym/checkpoints/$EXP_NAME
 export SYNC_STOP_FILE=/tmp/supo_sync_stop; rm -f $SYNC_STOP_FILE
 df -h /tmp | tail -1 | awk '{print "[job] /tmp disk: size="$2" used="$3" avail="$4}' | tee -a "$RUNS/ckpt_sync.log"
+# Measured in run #4: the pod's fuse mount copies a 113 GB checkpoint in ~15 min (~125 MB/s) while the
+# hdfs CLI puts stalled ~66 min on IPv4/IPv6 datanode connections before failing -> mirror via fuse.
+export SYNC_MODE_FORCE=${SYNC_MODE_FORCE:-fuse}
 source "$XD/supo_codegym/scripts/merlin/ckpt_sync.sh"
 ckpt_restore >> "$RUNS/ckpt_sync.log" 2>&1; tail -2 "$RUNS/ckpt_sync.log"
 ckpt_sync_loop >> "$RUNS/ckpt_sync.log" 2>&1 &
