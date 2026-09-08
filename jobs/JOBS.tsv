@@ -5,3 +5,5 @@ submitted_sf	name	sid	url	gpu	spec	note
 2026-09-07 17:03	supo-codegym-supo_smoke-h100	dae034f8b1a5cfdc	https://ml.tiktok-row.net/development/instance/jobs/dae034f8b1a5cfdc	H100_SXM_80GB	jobs/supo_smoke_h100.json	smoke resubmit on cu129 stack (first run 510a802886e902f6 failed: driver R535)
 2026-09-07 18:06	supo-codegym-supo_smoke-h100	5dd1a81ef5db89a8	https://ml.tiktok-row.net/development/instance/jobs/5dd1a81ef5db89a8	H100_SXM_80GB	jobs/supo_smoke_h100.json	smoke rerun #3: +min/max_global_steps tags fix (886677c)
 2026-09-07 20:59	supo-codegym-supo_smoke-h100	ed018f8fea6e3520	https://ml.tiktok-row.net/development/instance/jobs/ed018f8fea6e3520	H100_SXM_80GB	jobs/supo_smoke_h100.json	smoke rerun #4: local ckpt + HDFS mirror, empty-traj fix (04f556b)
+2026-09-07 22:01	supo-codegym-grpo-h100	48d248234f287e0c	https://ml.tiktok-row.net/development/instance/jobs/48d248234f287e0c	H100_SXM_80GB	jobs/grpo_h100.json	ARM grpo full run #1 (100 steps, SAVE_FREQ 5)
+2026-09-07 22:02	supo-codegym-supo-h100	92cf2bb1d2ccd525	https://ml.tiktok-row.net/development/instance/jobs/92cf2bb1d2ccd525	H100_SXM_80GB	jobs/supo_h100.json	ARM supo full run #1 (100 steps, SAVE_FREQ 5)
