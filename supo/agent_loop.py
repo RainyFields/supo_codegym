@@ -202,6 +202,18 @@ class SupoAgentLoop(AgentLoopBase):
 
         trajs: list[Trajectory] = state["trajs"]
         reward = float(state["reward"])
+        # verl's AgentLoopOutput.as_dict() writes the reward into rm_scores[-1] and needs >= 1
+        # response token per row: drop trajectories that never generated (e.g. a fresh
+        # post-summary trajectory cut off by max_steps / budget); keep at least one row.
+        non_empty = [t for t in trajs if len(t.response_ids) > 0]
+        if not non_empty:
+            t0 = trajs[0]
+            t0.token_ids.append(self.tokenizer.eos_token_id)
+            t0.response_mask.append(0)
+            if t0.response_logprobs:
+                t0.response_logprobs.append(0.0)
+            non_empty = [t0]
+        trajs = non_empty
         n_trajs = len(trajs)
         rollout_tokens = sum(len(t.response_mask) for t in trajs)
         reward_extra_info = {

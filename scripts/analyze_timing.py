@@ -17,6 +17,9 @@ import statistics as st
 import sys
 
 LINE_RE = re.compile(r"^step:(\d+)\s+-\s+(.*)$")
+# ray prefixes driver prints with "\x1b[36m(TaskRunnerV1 pid=N)\x1b[0m "; strip that + ANSI codes
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+RAY_PREFIX_RE = re.compile(r"^\([A-Za-z0-9_]+ pid=\d+(?:, ip=[0-9.]+)?\)\s*")
 KV_RE = re.compile(r"([A-Za-z0-9_/@.\-]+):(-?[0-9.]+(?:e-?\d+)?)")
 
 # phase key -> label; order = display order
@@ -55,7 +58,7 @@ def parse(paths):
     steps = {}
     for path in paths:
         for line in open(path, errors="replace"):
-            m = LINE_RE.match(line.strip())
+            m = LINE_RE.match(RAY_PREFIX_RE.sub("", ANSI_RE.sub("", line)).lstrip().strip())
             if not m:
                 continue
             step = int(m.group(1))
