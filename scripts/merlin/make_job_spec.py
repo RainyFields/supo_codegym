@@ -21,7 +21,7 @@ ap.add_argument("--gpu", default="h100", choices=list(QUEUES))
 ap.add_argument("--n_gpus", type=int, default=8)
 ap.add_argument("--run_tag", default="")
 ap.add_argument("--total_steps", default="100")
-ap.add_argument("--save_freq", default="5")
+ap.add_argument("--save_freq", default="10")
 ap.add_argument("--test_freq", default="10")
 ap.add_argument("--extra_env", default="", help="comma-separated K=V pairs forwarded to the entrypoint")
 ap.add_argument("--robust", action="store_true", help="use Merlin Robust Training (auto-restart) with role name executor")
@@ -34,7 +34,8 @@ env = {
     "TOTAL_STEPS": args.total_steps,
     "SAVE_FREQ": args.save_freq,
     "TEST_FREQ": args.test_freq,
-    "PUT_PAR": "16",         # parallel hdfs puts for the checkpoint mirror (~55 MB/s at 8)
+    "PUT_PAR": "16",
+    "MAX_CKPT_KEEP": "2",   # 2 local ckpts (~230 GB) so a slow mirror is not rotated away         # parallel hdfs puts for the checkpoint mirror (~55 MB/s at 8)
     "MIN_GPUS": str(args.n_gpus),
     "N_GPUS": str(args.n_gpus),
 }

@@ -44,7 +44,7 @@ _upload_dir() {  # $1 = step N
       find . -type f | sed 's|^\./||' | xargs -r -P $PUT_PAR -I{} bash -c '
         f="$1"; H="$2"; ok=0
         for flags in "-Djava.net.preferIPv4Stack=false -Djava.net.preferIPv6Addresses=true" "-Djava.net.preferIPv4Stack=true" "-Djava.net.preferIPv4Stack=false -Djava.net.preferIPv6Addresses=true"; do
-          HADOOP_OPTS="$flags" HADOOP_CLIENT_OPTS="$flags" "$H" dfs -put -f "$_PUT_SRC/$f" "$_PUT_URI/$f" >/tmp/supo_put_$$.log 2>&1 && { ok=1; break; }
+          HADOOP_OPTS="$flags" HADOOP_CLIENT_OPTS="$flags" timeout ${PUT_TIMEOUT:-900} "$H" dfs -put -f "$_PUT_SRC/$f" "$_PUT_URI/$f" >/tmp/supo_put_$$.log 2>&1 && { ok=1; break; }
           [ -s "$_PUT_ERR" ] || grep -v "lock\|WARN\|^\s*at " /tmp/supo_put_$$.log | tail -2 > "$_PUT_ERR"
         done; rm -f /tmp/supo_put_$$.log; [ $ok = 1 ] || echo "PUTFAIL $f"' _ {} "$H" ) | grep -c PUTFAIL | grep -q '^0$' || { _log "cli upload had failures ($(head -c 300 "$_PUT_ERR" 2>/dev/null | tr '\n' ' ')), falling back to fuse cp"; _fuse_copy "$src" "$dst"; }
   else

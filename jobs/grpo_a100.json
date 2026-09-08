@@ -35,9 +35,10 @@
     "ARM": "grpo",
     "RUN_TAG": "",
     "TOTAL_STEPS": "100",
-    "SAVE_FREQ": "5",
+    "SAVE_FREQ": "10",
     "TEST_FREQ": "10",
     "PUT_PAR": "16",
+    "MAX_CKPT_KEEP": "2",
     "MIN_GPUS": "8",
     "N_GPUS": "8"
    }

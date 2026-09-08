@@ -48,8 +48,8 @@
      "num": 1,
      "gpu": 1,
      "gpu_type": "H100_SXM_80GB",
-     "cpu": 16,
-     "memory_mb": 250000,
+     "cpu": 12,
+     "memory_mb": 193024,
      "queue_name": "compute-89-aliyun.va-cloudnative-aigcp-ark.eng.algorithm-guarantee"
     }
    ]
