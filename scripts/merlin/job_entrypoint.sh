@@ -104,6 +104,7 @@ export CKPT_DIR=/tmp/supo_ckpt/$EXP_NAME
 export HDFS_CKPT=$PROJECT_ROOT/checkpoints/$EXP_NAME
 export HDFS_CKPT_URI=hdfs://harunava/home/byte_arnold_va_ssd/mlsys/users/xiaoxuan/supo_codegym/checkpoints/$EXP_NAME
 export SYNC_STOP_FILE=/tmp/supo_sync_stop; rm -f $SYNC_STOP_FILE
+export NNODES=${NNODES:-1} NODE_RANK=${ARNOLD_ID:-0}
 df -h /tmp | tail -1 | awk '{print "[job] /tmp disk: size="$2" used="$3" avail="$4}' | tee -a "$RUNS/ckpt_sync.log"
 # Measured in run #4: the pod's fuse mount copies a 113 GB checkpoint in ~15 min (~125 MB/s) while the
 # hdfs CLI puts stalled ~66 min on IPv4/IPv6 datanode connections before failing -> mirror via fuse.
@@ -127,6 +128,31 @@ SYNC_PID=$!
     sleep 30; done ) &
 HOST_STATS_PID=$!
 
+# ── multi-node ray bootstrap (NNODES>1): rank 0 = head, others join; trainer runs on rank 0 only ──
+NNODES=${NNODES:-1}; NODE_RANK=${ARNOLD_ID:-0}; export NNODES
+if [ "$NNODES" -gt 1 ]; then
+  MY_IP=${MY_HOST_IP:-${BYTED_HOST_IP:-$(hostname -I | cut -d' ' -f1)}}
+  HEAD_FILE=$RUNS/ray_head_${ARNOLD_TRIAL_ID:-$$}.txt
+  echo "[job] multi-node: NNODES=$NNODES rank=$NODE_RANK ip=$MY_IP hosts=${ARNOLD_WORKER_HOSTS:-?}"
+  if [ "$NODE_RANK" = 0 ]; then
+    RAY_PORT=${ARNOLD_WORKER_0_PORT:-6379}
+    $XD/envs/supo/bin/ray start --head --node-ip-address="$MY_IP" --port="$RAY_PORT" --num-gpus="$N_GPUS" --disable-usage-stats >/dev/null 2>&1 || { echo "[job] FATAL: ray head failed"; exit 47; }
+    echo "$MY_IP:$RAY_PORT" > "$HEAD_FILE"; export RAY_ADDRESS="$MY_IP:$RAY_PORT"
+    for i in $(seq 1 90); do n=$($XD/envs/supo/bin/python -c "import ray; ray.init(address='$RAY_ADDRESS', ignore_reinit_error=True, logging_level='ERROR'); print(len([x for x in ray.nodes() if x['Alive']]))" 2>/dev/null); [ "${n:-0}" -ge "$NNODES" ] && break; sleep 20; done
+    echo "[job] ray cluster: ${n:-0}/$NNODES nodes alive ($(date))"; [ "${n:-0}" -ge "$NNODES" ] || { echo "[job] FATAL: ray workers did not join"; exit 47; }
+  else
+    for i in $(seq 1 90); do [ -s "$HEAD_FILE" ] && break; sleep 20; done
+    HEAD=$(cat "$HEAD_FILE" 2>/dev/null); [ -n "$HEAD" ] || { echo "[job] FATAL: no ray head published"; exit 47; }
+    echo "[job] joining ray head $HEAD ($(date))"
+    $XD/envs/supo/bin/ray start --address="$HEAD" --node-ip-address="$MY_IP" --num-gpus="$N_GPUS" --disable-usage-stats >/dev/null 2>&1 || { echo "[job] FATAL: ray worker failed to join"; exit 47; }
+    # stay up until rank 0 finishes (DONE/FAILED marker) or the head disappears; keep mirroring our shards
+    while [ ! -f "$RUNS/DONE" ] && [ ! -f "$RUNS/FAILED.$ARNOLD_TRIAL_ID" ] && $XD/envs/supo/bin/ray status --address="$HEAD" >/dev/null 2>&1; do sleep 60; done
+    echo "[job] rank $NODE_RANK: head finished ($(date)); draining mirror"
+    kill $HOST_STATS_PID 2>/dev/null; ckpt_drain >> "$RUNS/ckpt_sync.log" 2>&1; tail -2 "$RUNS/ckpt_sync.log"
+    $XD/envs/supo/bin/ray stop >/dev/null 2>&1; exit 0
+  fi
+fi
+
 # ── train ───────────────────────────────────────────────────────────────────
 export MODEL_PATH=$MODEL_LOCAL
 export PROJECT_DIR=$XD/supo_codegym VERL_DIR=$XD/external/verl VENV=$XD/envs/supo
@@ -138,6 +164,7 @@ rc=${PIPESTATUS[0]}
 kill $HOST_STATS_PID 2>/dev/null
 ckpt_drain >> "$RUNS/ckpt_sync.log" 2>&1   # NOT piped: a pipe forks a subshell that cannot `wait` on SYNC_PID
 tail -3 "$RUNS/ckpt_sync.log"
-if [ $rc -eq 0 ]; then touch "$RUNS/DONE"; else echo "rc=$rc $(date)" >> "$RUNS/FAILED"; fi
+if [ $rc -eq 0 ]; then touch "$RUNS/DONE"; else echo "rc=$rc $(date)" >> "$RUNS/FAILED"; touch "$RUNS/FAILED.${ARNOLD_TRIAL_ID:-0}"; fi
+[ "${NNODES:-1}" -gt 1 ] && $XD/envs/supo/bin/ray stop >/dev/null 2>&1
 echo "[job] done rc=$rc $(date)"
 exit $rc
