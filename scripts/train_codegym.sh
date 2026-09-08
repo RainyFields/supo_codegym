@@ -54,6 +54,10 @@ export PYTHONPATH="$OVERLAY:$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 # vLLM's executor kills the engine when one execute_model RPC exceeds this (default 300 s); a
 # host-side stall (sandbox spawn burst) must not take the rollout engine down. Ray workers inherit it.
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXEC_TIMEOUT:-3600}
+# FlashInfer JIT-compiles Qwen3.5 GDN prefill + sampling kernels with nvcc at first use (cicc ~5-6 GB
+# each, OOM-killed by the pod memory cgroup in run d1725c2404e369a3); use the prebuilt triton paths.
+export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
+GDN_PREFILL_BACKEND=${GDN_PREFILL_BACKEND:-triton}
 export CODEGYM_SPAWN_CONCURRENCY=${CODEGYM_SPAWN_CONCURRENCY:-16}
 export WANDB_RUN_ID=${WANDB_RUN_ID:-$EXP_NAME}
 export WANDB_RESUME=${WANDB_RESUME:-allow}
@@ -120,6 +124,7 @@ exec "$VENV/bin/python" -m verl.trainer.main_ppo ${HYDRA_EXTRA:-} \
   actor_rollout_ref.rollout.top_k=-1 \
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.free_cache_engine=True \
+  +actor_rollout_ref.rollout.engine_kwargs.vllm.gdn_prefill_backend=$GDN_PREFILL_BACKEND \
   actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=True \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$LOGP_MAX_TOKENS \
   actor_rollout_ref.rollout.val_kwargs.do_sample=False \

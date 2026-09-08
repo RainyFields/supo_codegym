@@ -104,6 +104,8 @@ SYNC_PID=$!
 ( while true; do
     { echo "=== $(date '+%m-%d %H:%M:%S') load=$(cut -d' ' -f1-3 /proc/loadavg) procs=$(ls /proc | grep -c '^[0-9]') py=$(pgrep -c python)";
       free -g | awk 'NR==2{print "mem_total="$2"G used="$3"G free="$4"G avail="$7"G"}';
+      if [ -f /sys/fs/cgroup/memory.max ]; then echo "cgroup_v2 max=$(cat /sys/fs/cgroup/memory.max) current=$(cat /sys/fs/cgroup/memory.current) $(grep -E 'oom_kill ' /sys/fs/cgroup/memory.events | tr '\n' ' ')";
+      elif [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then echo "cgroup_v1 limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes) usage=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes) $(grep oom_kill /sys/fs/cgroup/memory/memory.oom_control | tr '\n' ' ')"; fi;
       ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -4 | awk '{printf "%s %.1fG; ", $2, $1/1048576}'; echo;
       nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader 2>/dev/null | paste -sd' ' | cut -c1-200;
       dmesg -T 2>/dev/null | grep -i -E 'killed process|out of memory' | tail -2; } >> "$RUNS/host_stats.log" 2>&1
