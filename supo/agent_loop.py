@@ -126,6 +126,12 @@ class SupoAgentLoop(AgentLoopBase):
             out = await self.server_manager.generate(
                 request_id=request_id, prompt_ids=traj.token_ids, sampling_params=sampling_params
             )
+        # verl's staleness metrics (trainer_base._compute_metrics) need the generation weight
+        # version of every trajectory: track min/max over all LLM calls of this rollout.
+        gs = (getattr(out, "extra_fields", None) or {}).get("global_steps")
+        if gs is not None:
+            metrics["_min_gs"] = gs if metrics.get("_min_gs") is None else min(metrics["_min_gs"], gs)
+            metrics["_max_gs"] = gs if metrics.get("_max_gs") is None else max(metrics["_max_gs"], gs)
         if metrics.get("num_preempted") is None:
             metrics["num_preempted"] = out.num_preempted if out.num_preempted is not None else -1
         elif out.num_preempted:
@@ -229,6 +235,9 @@ class SupoAgentLoop(AgentLoopBase):
                         num_preempted=metrics.get("num_preempted", -1),
                     ),
                     extra_fields={
+                        "global_steps": global_step,
+                        "min_global_steps": metrics.get("_min_gs", global_step),
+                        "max_global_steps": metrics.get("_max_gs", global_step),
                         "gen_uid": gen_uid,
                         "traj_idx": i,
                         "num_trajs": n_trajs,
