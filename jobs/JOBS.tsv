@@ -28,3 +28,4 @@ submitted_sf	name	sid	url	gpu	spec	note
 2026-09-08 15:33	supo-codegym-egressprobe-h100	01031c55137557b8	https://ml.tiktok-row.net/development/instance/jobs/01031c55137557b8	H100_SXM_80GB	jobs/egressprobe_h100.json	pod egress probe (HF/PyPI/GitHub reachability + HF download speed)
 2026-09-08 15:39	supo-codegym-supo_think-h100	65f260ed2acb8e5d	https://ml.tiktok-row.net/development/instance/jobs/65f260ed2acb8e5d	H100_SXM_80GB	jobs/supo_think_h100.json	ARM supo THINKING run #1 (enable_thinking, 4K turn cap; 1c6efb1)
 2026-09-08 15:40	supo-codegym-grpo_think-h100	28b2b92f75a4a1ad	https://ml.tiktok-row.net/development/instance/jobs/28b2b92f75a4a1ad	H100_SXM_80GB	jobs/grpo_think_h100.json	ARM grpo THINKING run #1 (enable_thinking, 4K turn cap; 1c6efb1)
+2026-09-08 15:41	supo-codegym-2nodeprobe-h100	72a8f7fca9495f87	https://ml.tiktok-row.net/development/instance/jobs/72a8f7fca9495f87	H100_SXM_80GB	jobs/twonodeprobe_h100.json	2-node env/ray probe for the 32B arm

@@ -1,0 +1,58 @@
+{
+ "name": "supo-codegym-2nodeprobe-h100",
+ "namespace": "/user/xiaoxuan.lei",
+ "job_type": "train",
+ "description": "2 x 1-GPU probe: Arnold multi-node env vars + cross-node reachability + ray head/worker bootstrap",
+ "attachments": [
+  {
+   "kind": "hdfs_volume",
+   "hdfs_volume_attachment": {
+    "hdfs_volumes": [
+     {
+      "access_mode": "RW",
+      "extra": "",
+      "mnt": "/mnt/hdfs/mlsys",
+      "path": "hdfs://harunava/home/byte_arnold_va_ssd/mlsys",
+      "roles": [
+       "worker"
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "job_config": {
+  "job_template_config": {
+   "entrypoint_full_script": "echo \"NODE id=$ARNOLD_ID host=$(hostname) ip4=$(hostname -I 2>/dev/null | cut -d' ' -f1)\"; env | grep -E '^(ARNOLD_(ID|WORKER|NUM|ROLE|EXECUTOR|MERLIN_INTERNAL_0|TRIAL|RUN)|MERLIN|RANK|WORLD|MASTER)' | grep -v 'CURRENT_PORT' | sort | head -40; echo \"--- ports\"; env | grep -E '^ARNOLD_MERLIN_INTERNAL_[0-1]_' ; echo \"--- reachability\"; for h in $(env | grep -oE 'ARNOLD_WORKER_[0-9]+_HOST=.*' | cut -d= -f2); do ping -c1 -W2 $h >/dev/null 2>&1 && echo \"PING $h ok\" || echo \"PING $h FAIL\"; done; PY=/usr/bin/python3; which ray || true; exit 0",
+   "git_repo": {
+    "repo_name": ""
+   },
+   "image_meta": {
+    "image_source": "url",
+    "image_url": "aliyun-va-hub.byted.org/arnold/modelchef-gpu:1.0.0.38"
+   },
+   "env_map": {}
+  }
+ },
+ "resource_config": {
+  "resource_backend": "arnold",
+  "arnold_resource_config": {
+   "cluster_ids": [
+    4
+   ],
+   "cluster_select_mode": "single",
+   "group_id": 765,
+   "roles": [
+    {
+     "name": "worker",
+     "num": 2,
+     "gpu": 1,
+     "gpu_type": "H100_SXM_80GB",
+     "cpu": 12,
+     "memory_mb": 193024,
+     "queue_name": "compute-89-aliyun.va-cloudnative-aigcp-ark.eng.algorithm-guarantee"
+    }
+   ]
+  }
+ }
+}

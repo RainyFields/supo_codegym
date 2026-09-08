@@ -59,11 +59,21 @@ rm -rf "$XD/supo_codegym" "$XD/external/verl"
 tar xzf "$ASSETS/supo-repo.tar.gz" -C / || { echo "[job] FATAL: repo untar failed"; exit 44; }
 
 # ── base model -> pod-local disk (fast, repeated loads) ─────────────────────
-MODEL_SRC=/mnt/hdfs/mlsys/models/Qwen3.5-9B
-MODEL_LOCAL=/tmp/models/Qwen3.5-9B
-if [ ! -f "$MODEL_LOCAL/model.safetensors.index.json" ] || [ "$(ls "$MODEL_LOCAL"/*.safetensors 2>/dev/null | wc -l)" -lt 4 ]; then
+# MODEL_SRC: HDFS copy (default Qwen3.5-9B). MODEL_HF_ID: fetch from Hugging Face instead (pods reach
+# huggingface.co at ~115 MB/s, probe 01031c55137557b8) — used for Qwen2.5-32B-Instruct (not on HDFS).
+MODEL_SRC=${MODEL_SRC:-/mnt/hdfs/mlsys/models/Qwen3.5-9B}
+MODEL_LOCAL=/tmp/models/$(basename "${MODEL_HF_ID:-$MODEL_SRC}")
+NSHARD_MIN=${MODEL_MIN_SHARDS:-4}
+if [ ! -f "$MODEL_LOCAL/model.safetensors.index.json" ] || [ "$(ls "$MODEL_LOCAL"/*.safetensors 2>/dev/null | wc -l)" -lt "$NSHARD_MIN" ]; then
   echo "[job] staging model to $MODEL_LOCAL ($(date))..."
-  mkdir -p "$MODEL_LOCAL" && cp "$MODEL_SRC"/* "$MODEL_LOCAL"/ || { echo "[job] FATAL: model staging failed"; exit 45; }
+  if [ -n "${MODEL_HF_ID:-}" ]; then
+    mkdir -p "$MODEL_LOCAL" && $PY - <<PYEOF || { echo "[job] FATAL: HF download failed"; exit 45; }
+from huggingface_hub import snapshot_download
+snapshot_download("$MODEL_HF_ID", local_dir="$MODEL_LOCAL", allow_patterns=["*.json","*.safetensors","*.txt","*.jinja","merges.txt","vocab.json"], max_workers=16)
+PYEOF
+  else
+    mkdir -p "$MODEL_LOCAL" && cp "$MODEL_SRC"/* "$MODEL_LOCAL"/ || { echo "[job] FATAL: model staging failed"; exit 45; }
+  fi
 fi
 echo "[job] model staged $(du -sh $MODEL_LOCAL | cut -f1) $(date)"
 
