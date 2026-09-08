@@ -81,7 +81,13 @@ ckpt_sync_loop() {  # background; stops when $SYNC_STOP_FILE exists and everythi
     local n=$(cat "$CKPT_DIR/latest_checkpointed_iteration.txt" 2>/dev/null || echo 0)
     if [ "$n" -gt "$last" ] 2>/dev/null && [ -d "$CKPT_DIR/global_step_$n" ]; then
       sleep 20   # let verl finish writing data.pt / tq state after the tracker file
-      _upload_dir "$n" && { last=$n; _prune_hdfs; }
+      if _upload_dir "$n"; then
+        last=$n; _prune_hdfs
+        # free pod-local disk (shared nodes had only ~250 GB free): the verified HDFS copy is the
+        # source of truth; a restart restores it via ckpt_restore. verl's keep=1 pruning tolerates
+        # already-missing older dirs.
+        [ "${LOCAL_DELETE_AFTER_SYNC:-1}" = 1 ] && { rm -rf "$CKPT_DIR/global_step_$n" && _log "removed local global_step_$n after verified upload"; }
+      fi
     elif [ -f "${SYNC_STOP_FILE:-/tmp/supo_sync_stop}" ]; then
       _log "sync loop exiting (last synced global_step_$last)"; return 0
     else
