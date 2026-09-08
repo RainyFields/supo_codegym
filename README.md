@@ -92,3 +92,9 @@ Workbench devbox template is `modelchef-gpu:1.0.0.54` (`/usr/local/cuda-13.0` + 
 staged and put on LD_LIBRARY_PATH (202 TFLOP/s). NCCL / flash-attn / vLLM verdicts: see probes #5 in jobs/JOBS.tsv.
 To move a job to cu130: set `image_url` to `...modelchef-gpu:1.0.0.54` and restore `envs-supo-cu130` (23 chunks
 under `job-assets/cu130_parts/`).
+
+**Probes #6 (6bd014dd035ba227 img 1.0.0.38+staged compat, d2f7c982364f950c img 1.0.0.54): full cu130 stack PASSES on
+R535** — torch matmul 203–212 TFLOP/s, cuSOLVER/cuDNN, flash-attn 2.8.3 cu13 dense+varlen, NCCL init+all_reduce,
+vLLM 0.24 cu130 serving Qwen3.5-9B (≈280–300 tok/s for 8 prompts). Only blemish: SIGSEGV (exit 139) inside
+`dist.destroy_process_group()` AFTER a successful all_reduce, on both images (cu129 does not show it) — a
+teardown crash, not a training one; test in isolation before relying on cu130 for long runs.
