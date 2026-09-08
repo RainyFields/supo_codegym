@@ -19,6 +19,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--arm", required=True, choices=["grpo", "supo"])
 ap.add_argument("--gpu", default="h100", choices=list(QUEUES))
 ap.add_argument("--n_gpus", type=int, default=8)
+ap.add_argument("--nodes", type=int, default=1, help="worker pods (multi-node ray; NNODES env)")
 ap.add_argument("--run_tag", default="")
 ap.add_argument("--total_steps", default="100")
 ap.add_argument("--save_freq", default="10")
@@ -38,6 +39,7 @@ env = {
     "MAX_CKPT_KEEP": "2",   # 2 local ckpts (~230 GB) so a slow mirror is not rotated away         # parallel hdfs puts for the checkpoint mirror (~55 MB/s at 8)
     "MIN_GPUS": str(args.n_gpus),
     "N_GPUS": str(args.n_gpus),
+    "NNODES": str(args.nodes),
 }
 for kv in filter(None, args.extra_env.split(",")):
     k, v = kv.split("=", 1)
@@ -85,7 +87,7 @@ spec = {
             "roles": [
                 {
                     "name": role_name,
-                    "num": 1,
+                    "num": args.nodes,
                     "gpu": args.n_gpus,
                     "gpu_type": gpu_type,
                     "cpu": 96 if args.n_gpus == 8 else 12 * args.n_gpus,

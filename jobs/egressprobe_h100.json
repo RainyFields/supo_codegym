@@ -1,0 +1,58 @@
+{
+ "name": "supo-codegym-egressprobe-h100",
+ "namespace": "/user/xiaoxuan.lei",
+ "job_type": "train",
+ "description": "1-GPU probe: can pods reach huggingface.co / PyPI / GitHub, and how fast?",
+ "attachments": [
+  {
+   "kind": "hdfs_volume",
+   "hdfs_volume_attachment": {
+    "hdfs_volumes": [
+     {
+      "access_mode": "RW",
+      "extra": "",
+      "mnt": "/mnt/hdfs/mlsys",
+      "path": "hdfs://harunava/home/byte_arnold_va_ssd/mlsys",
+      "roles": [
+       "worker"
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "job_config": {
+  "job_template_config": {
+   "entrypoint_full_script": "for u in https://huggingface.co/Qwen/Qwen2.5-32B-Instruct/resolve/main/config.json https://pypi.org/simple/torch/ https://github.com/StigLidu/CodeGym https://download.pytorch.org/whl/cu129/torch/; do code=$(curl -s -o /dev/null -w \"%{http_code}\" --max-time 20 -L \"$u\"); echo \"EGRESS $u -> $code\"; done; env | grep -i proxy; t0=$(date +%s); curl -sL --max-time 300 -o /tmp/shard.bin \"https://huggingface.co/Qwen/Qwen2.5-32B-Instruct/resolve/main/model-00017-of-00017.safetensors\"; sz=$(stat -c %s /tmp/shard.bin 2>/dev/null || echo 0); echo \"EGRESS hf download $((sz/1000000)) MB in $(( $(date +%s)-t0 )) s\"; exit 0",
+   "git_repo": {
+    "repo_name": ""
+   },
+   "image_meta": {
+    "image_source": "url",
+    "image_url": "aliyun-va-hub.byted.org/arnold/modelchef-gpu:1.0.0.38"
+   },
+   "env_map": {}
+  }
+ },
+ "resource_config": {
+  "resource_backend": "arnold",
+  "arnold_resource_config": {
+   "cluster_ids": [
+    4
+   ],
+   "cluster_select_mode": "single",
+   "group_id": 765,
+   "roles": [
+    {
+     "name": "worker",
+     "num": 1,
+     "gpu": 1,
+     "gpu_type": "H100_SXM_80GB",
+     "cpu": 12,
+     "memory_mb": 193024,
+     "queue_name": "compute-89-aliyun.va-cloudnative-aigcp-ark.eng.algorithm-guarantee"
+    }
+   ]
+  }
+ }
+}

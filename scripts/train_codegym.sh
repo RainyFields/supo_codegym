@@ -32,14 +32,20 @@ LOGGER=${LOGGER:-"['console','wandb']"}
 EXTRA_ARGS=${EXTRA_ARGS:-}
 
 case "$ARM" in
-  supo) WORKING_CONTEXT=4096;  MAX_SUMMARIES=7; PROMPT_LEN=4096; RESP_LEN=5120;  MAX_MODEL_LEN=10240; TAG=4kx8 ;;
+  supo) WORKING_CONTEXT=4096;  MAX_SUMMARIES=7; PROMPT_LEN=4096; RESP_LEN=5120;  MAX_MODEL_LEN=10240; TAG=4kx8
+        [ "${THINK:-0}" = 1 ] && { RESP_LEN=8192; MAX_MODEL_LEN=12288; } ;;
   grpo) WORKING_CONTEXT=32768; MAX_SUMMARIES=0; PROMPT_LEN=2048; RESP_LEN=30720; MAX_MODEL_LEN=34816; TAG=32k
         # 35K-token sequences OOM the FSDP update (74 GB in the logits/entropy backward, run 48d248234f287e0c):
         # fused linear+log-prob kernels (verl monkey_patch supports qwen3_5) never materialize full logits.
         USE_FUSED=${USE_FUSED:-True}; OPT_OFFLOAD=${OPT_OFFLOAD:-True} ;;
   *) echo "unknown ARM=$ARM" >&2; exit 2 ;;
 esac
-EXP_NAME=${EXP_NAME:-${ARM}_codegym_qwen35-9b_${TAG}${RUN_TAG}}
+MODEL_TAG=${MODEL_TAG:-qwen35-9b}
+EXP_NAME=${EXP_NAME:-${ARM}_codegym_${MODEL_TAG}_${TAG}${RUN_TAG}}
+# THINK=1: Qwen3 thinking mode (enable_thinking=true). Earlier turns' <think> content stays packed in
+# the token stream and is trained (verl continuous-token convention). Per-turn caps grow accordingly.
+THINK=${THINK:-0}
+if [ "$THINK" = 1 ]; then ENABLE_THINKING=true; TURN_MAX=${TURN_MAX:-4096}; SUMMARY_MAX=${SUMMARY_MAX:-2048}; else ENABLE_THINKING=false; TURN_MAX=${TURN_MAX:-1024}; SUMMARY_MAX=${SUMMARY_MAX:-1024}; fi
 CKPT_DIR=${CKPT_DIR:-$PROJECT_ROOT/checkpoints/$EXP_NAME}
 DUMP_DIR=${DUMP_DIR:-$PROJECT_ROOT/rollouts/$EXP_NAME}
 VAL_DUMP_DIR=${VAL_DUMP_DIR:-$PROJECT_ROOT/outputs/$EXP_NAME/val}
@@ -78,7 +84,7 @@ exec "$VENV/bin/python" -m verl.trainer.main_ppo ${HYDRA_EXTRA:-} \
   data.truncation=error \
   data.return_raw_chat=True \
   data.shuffle=True \
-  +data.apply_chat_template_kwargs.enable_thinking=false \
+  +data.apply_chat_template_kwargs.enable_thinking=$ENABLE_THINKING \
   algorithm.adv_estimator=supo \
   algorithm.use_kl_in_reward=False \
   algorithm.norm_adv_by_std_in_grpo=True \
@@ -102,7 +108,7 @@ exec "$VENV/bin/python" -m verl.trainer.main_ppo ${HYDRA_EXTRA:-} \
   actor_rollout_ref.actor.calculate_entropy=True \
   actor_rollout_ref.actor.entropy_from_logits_with_chunking=True \
   actor_rollout_ref.actor.entropy_checkpointing=True \
-  actor_rollout_ref.actor.fsdp_config.param_offload=False \
+  actor_rollout_ref.actor.fsdp_config.param_offload=${PARAM_OFFLOAD:-False} \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=${OPT_OFFLOAD:-False} \
   actor_rollout_ref.model.use_fused_kernels=${USE_FUSED:-False} \
   actor_rollout_ref.model.fused_kernel_options.impl_backend=${FUSED_BACKEND:-triton} \
@@ -110,7 +116,7 @@ exec "$VENV/bin/python" -m verl.trainer.main_ppo ${HYDRA_EXTRA:-} \
   actor_rollout_ref.actor.fsdp_config.ulysses_sequence_parallel_size=${SP_SIZE:-1} \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
-  actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+  actor_rollout_ref.rollout.tensor_model_parallel_size=${ROLLOUT_TP:-1} \
   actor_rollout_ref.rollout.gpu_memory_utilization=$GPU_MEM_UTIL \
   actor_rollout_ref.rollout.prompt_length=$PROMPT_LEN \
   actor_rollout_ref.rollout.response_length=$RESP_LEN \
@@ -133,7 +139,7 @@ exec "$VENV/bin/python" -m verl.trainer.main_ppo ${HYDRA_EXTRA:-} \
   actor_rollout_ref.rollout.agent.default_agent_loop=supo_agent \
   actor_rollout_ref.rollout.agent.agent_loop_config_path="$PROJECT_DIR/configs/agent.yaml" \
   actor_rollout_ref.rollout.agent.num_workers=$AGENT_WORKERS \
-  "+actor_rollout_ref.rollout.custom={working_context: $WORKING_CONTEXT, max_summaries: $MAX_SUMMARIES, summary_ratio: 0.95, max_steps: 100, turn_max_tokens: 1024, summary_max_tokens: 1024, env_code_path: $DATA_DIR/codegym_env_codes.parquet, dump_dir: $DUMP_DIR, dump_every: 64}" \
+  "+actor_rollout_ref.rollout.custom={working_context: $WORKING_CONTEXT, max_summaries: $MAX_SUMMARIES, summary_ratio: 0.95, max_steps: 100, turn_max_tokens: $TURN_MAX, summary_max_tokens: $SUMMARY_MAX, env_code_path: $DATA_DIR/codegym_env_codes.parquet, dump_dir: $DUMP_DIR, dump_every: 64}" \
   trainer.logger="$LOGGER" \
   trainer.project_name="$WANDB_PROJECT" \
   trainer.experiment_name="$EXP_NAME" \
