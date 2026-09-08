@@ -87,6 +87,19 @@ print("[job] preflight OK", flush=True)
 PYEOF
 rc=$?; [ $rc -ne 0 ] && { echo "[job] exiting 42 for reschedule"; exit 42; }
 
+# ── checkpoints: local save + background HDFS mirror (see scripts/merlin/ckpt_sync.sh) ─────
+case "$ARM" in supo) TAG=4kx8 ;; grpo) TAG=32k ;; *) TAG=$ARM ;; esac   # must match train_codegym.sh
+export EXP_NAME=${EXP_NAME:-${ARM}_codegym_qwen35-9b_${TAG}${RUN_TAG:-}}
+export CKPT_DIR=/tmp/supo_ckpt/$EXP_NAME
+export HDFS_CKPT=$PROJECT_ROOT/checkpoints/$EXP_NAME
+export HDFS_CKPT_URI=hdfs://harunava/home/byte_arnold_va_ssd/mlsys/users/xiaoxuan/supo_codegym/checkpoints/$EXP_NAME
+export SYNC_STOP_FILE=/tmp/supo_sync_stop; rm -f $SYNC_STOP_FILE
+df -h /tmp | tail -1 | awk '{print "[job] /tmp disk: size="$2" used="$3" avail="$4}'
+source "$XD/supo_codegym/scripts/merlin/ckpt_sync.sh"
+ckpt_restore 2>&1 | tee -a "$RUNS/ckpt_sync.log"
+ckpt_sync_loop >> "$RUNS/ckpt_sync.log" 2>&1 &
+SYNC_PID=$!
+
 # ── train ───────────────────────────────────────────────────────────────────
 export MODEL_PATH=$MODEL_LOCAL
 export PROJECT_DIR=$XD/supo_codegym VERL_DIR=$XD/external/verl VENV=$XD/envs/supo
@@ -95,6 +108,7 @@ LOG=$RUNS/train_$(date +%Y%m%d_%H%M%S).log
 echo "[job] launching training, log=$LOG"
 bash "$XD/supo_codegym/scripts/train_codegym.sh" 2>&1 | tee "$LOG"
 rc=${PIPESTATUS[0]}
+ckpt_drain 2>&1 | tee -a "$RUNS/ckpt_sync.log"
 if [ $rc -eq 0 ]; then touch "$RUNS/DONE"; else echo "rc=$rc $(date)" >> "$RUNS/FAILED"; fi
 echo "[job] done rc=$rc $(date)"
 exit $rc

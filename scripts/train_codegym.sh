@@ -132,7 +132,7 @@ exec "$VENV/bin/python" -m verl.trainer.main_ppo ${HYDRA_EXTRA:-} \
   trainer.val_before_train=$VAL_BEFORE_TRAIN \
   trainer.default_local_dir="$CKPT_DIR" \
   trainer.resume_mode=auto \
-  trainer.max_actor_ckpt_to_keep=2 \
+  trainer.max_actor_ckpt_to_keep=${MAX_CKPT_KEEP:-1} \
   trainer.validation_data_dir="$VAL_DUMP_DIR" \
   trainer.log_val_generations=8 \
   trainer.balance_batch=True \
