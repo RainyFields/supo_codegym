@@ -7,3 +7,4 @@ submitted_sf	name	sid	url	gpu	spec	note
 2026-09-07 20:59	supo-codegym-supo_smoke-h100	ed018f8fea6e3520	https://ml.tiktok-row.net/development/instance/jobs/ed018f8fea6e3520	H100_SXM_80GB	jobs/supo_smoke_h100.json	smoke rerun #4: local ckpt + HDFS mirror, empty-traj fix (04f556b)
 2026-09-07 22:01	supo-codegym-grpo-h100	48d248234f287e0c	https://ml.tiktok-row.net/development/instance/jobs/48d248234f287e0c	H100_SXM_80GB	jobs/grpo_h100.json	ARM grpo full run #1 (100 steps, SAVE_FREQ 5)
 2026-09-07 22:02	supo-codegym-supo-h100	92cf2bb1d2ccd525	https://ml.tiktok-row.net/development/instance/jobs/92cf2bb1d2ccd525	H100_SXM_80GB	jobs/supo_h100.json	ARM supo full run #1 (100 steps, SAVE_FREQ 5)
+2026-09-07 22:40	supo-codegym-grpo-h100	d1725c2404e369a3	https://ml.tiktok-row.net/development/instance/jobs/d1725c2404e369a3	H100_SXM_80GB	jobs/grpo_h100.json	ARM grpo run #2: fused kernels + opt offload (d39d09c) after OOM in #1
