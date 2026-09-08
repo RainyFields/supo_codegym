@@ -1,0 +1,58 @@
+{
+ "name": "supo-codegym-compat13probe-h100",
+ "namespace": "/user/xiaoxuan.lei",
+ "job_type": "train",
+ "description": "1-GPU probe: does CUDA 13.0 forward-compat libcuda (580.126.20) initialize on the R535 pod driver?",
+ "attachments": [
+  {
+   "kind": "hdfs_volume",
+   "hdfs_volume_attachment": {
+    "hdfs_volumes": [
+     {
+      "access_mode": "RW",
+      "extra": "",
+      "mnt": "/mnt/hdfs/mlsys",
+      "path": "hdfs://harunava/home/byte_arnold_va_ssd/mlsys",
+      "roles": [
+       "worker"
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "job_config": {
+  "job_template_config": {
+   "entrypoint_full_script": "set -x; nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | head -1; cat /proc/driver/nvidia/version | head -1\nmkdir -p /tmp/c13 && tar xzf /mnt/hdfs/mlsys/users/xiaoxuan/supo_codegym/job-assets/cuda-13.0-compat.tar.gz -C /tmp/c13 && ls /tmp/c13/compat\ncat > /tmp/cuinit.py <<'PY'\nimport ctypes, sys\npath = sys.argv[1]\ntry:\n    lib = ctypes.CDLL(path)\nexcept OSError as e:\n    print(f\"[{path}] dlopen FAILED: {e}\"); sys.exit(0)\nrc = lib.cuInit(0); v = ctypes.c_int(0); lib.cuDriverGetVersion(ctypes.byref(v))\nndev = ctypes.c_int(0); rc2 = lib.cuDeviceGetCount(ctypes.byref(ndev))\nname = ctypes.create_string_buffer(256); dev = ctypes.c_int(0); rc3 = lib.cuDeviceGet(ctypes.byref(dev), 0); lib.cuDeviceGetName(name, 256, dev)\nprint(f\"[{path}] cuInit rc={rc} (0=OK, 803=SYSTEM_DRIVER_MISMATCH, 999=UNKNOWN, 100=NO_DEVICE) driver_api_version={v.value} devices={ndev.value} dev0={name.value.decode(errors='ignore')}\")\nPY\necho \"=== default (image) libcuda ===\"; python3 /tmp/cuinit.py libcuda.so.1\necho \"=== CUDA 13.0 compat libcuda ===\"; python3 /tmp/cuinit.py /tmp/c13/compat/libcuda.so.1\necho \"=== CUDA 13.0 compat via LD_LIBRARY_PATH ===\"; LD_LIBRARY_PATH=/tmp/c13/compat python3 /tmp/cuinit.py libcuda.so.1\nexit 0",
+   "git_repo": {
+    "repo_name": ""
+   },
+   "image_meta": {
+    "image_source": "url",
+    "image_url": "aliyun-va-hub.byted.org/arnold/modelchef-gpu:1.0.0.38"
+   },
+   "env_map": {}
+  }
+ },
+ "resource_config": {
+  "resource_backend": "arnold",
+  "arnold_resource_config": {
+   "cluster_ids": [
+    4
+   ],
+   "cluster_select_mode": "single",
+   "group_id": 765,
+   "roles": [
+    {
+     "name": "worker",
+     "num": 1,
+     "gpu": 1,
+     "gpu_type": "H100_SXM_80GB",
+     "cpu": 12,
+     "memory_mb": 193024,
+     "queue_name": "compute-89-aliyun.va-cloudnative-aigcp-ark.eng.algorithm-guarantee"
+    }
+   ]
+  }
+ }
+}

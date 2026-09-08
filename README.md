@@ -76,3 +76,10 @@ flash-attn 2.8.3 has no cu12/torch-2.11 wheel anywhere (official, verl wheelhous
 entrypoint builds it once in the pod (96 cores, `FLASH_ATTN_CUDA_ARCHS=80;90`, staged CUDA 12.9 nvcc
 toolchain `job-assets/cuda-12.9-toolchain.tar.gz`) and caches it at `job-assets/wheels/cu129torch2.11/`.
 Devbox build is impractical: this workspace is cgroup-capped at 8 CPUs / 32 GB (nvcc OOM-kills).
+
+**Update 2026-09-08 (probe cad65f3e2949d9dd):** the CUDA 13.0 forward-compat `libcuda` (580.126.20, from
+`/usr/local/cuda-13.0/compat` on the devbox, staged as `job-assets/cuda-13.0-compat.tar.gz`) DOES initialize on
+the R535 pods — `cuInit` returns 0 with driver API 13000 and the H100 enumerated — despite NVIDIA's support
+table listing R570+ only. So cu130 is probably usable here by exporting `LD_LIBRARY_PATH=<compat dir>` in the
+entrypoint (untested beyond cuInit: no torch/NCCL/vLLM run yet). The cu130 venv is kept at
+`~/xiaoxuan/envs/supo-cu130`; spec `jobs/compat13probe_h100.json` is the probe.
