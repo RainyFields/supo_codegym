@@ -28,7 +28,7 @@ _fuse_copy() { mkdir -p "$2" && cp -r "$1/." "$2/"; }   # copy contents; safe wh
 _upload_dir() {  # $1 = step N
   local n=$1 src="$CKPT_DIR/global_step_$1" dst="$HDFS_CKPT/global_step_$1" uri="$HDFS_CKPT_URI/global_step_$1"
   [ -d "$src" ] || { _log "src vanished: $src"; return 1; }
-  local t0=$(date +%s) bytes=$(du -sb "$src" | cut -f1)
+  local t0=$(date +%s) bytes=$(du -sb "$src" | cut -f1) nsrc=$(find "$src" -type f | wc -l)   # captured BEFORE the copy: verl (keep=1) may rotate $src away right after
   _rm_retry "$dst"
   if [ "${SYNC_MODE:-cli}" = cli ]; then
     # per-file put with 3 attempts alternating the JVM IP-stack flags (datanodes answer on IPv4 or
@@ -44,7 +44,7 @@ _upload_dir() {  # $1 = step N
   else
     _fuse_copy "$src" "$dst"
   fi
-  local nsrc=$(find "$src" -type f | wc -l) ndst=$(find "$dst" -type f 2>/dev/null | wc -l) bdst=$(du -sb "$dst" 2>/dev/null | cut -f1)
+  local ndst=$(find "$dst" -type f 2>/dev/null | wc -l) bdst=$(du -sb "$dst" 2>/dev/null | cut -f1)
   if [ "$nsrc" = "$ndst" ] && [ "$bytes" = "$bdst" ]; then
     touch "$dst/.COMPLETE"; echo "$n" > "$HDFS_CKPT/latest_synced.txt"
     _log "uploaded global_step_$n: $((bytes/1000000)) MB in $(( $(date +%s)-t0 )) s ($(( bytes/1000000/($(date +%s)-t0+1) )) MB/s, $nsrc files)"
