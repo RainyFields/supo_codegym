@@ -29,7 +29,13 @@ _upload_dir() {  # $1 = step N
   local n=$1 src="$CKPT_DIR/global_step_$1" dst="$HDFS_CKPT/global_step_$1" uri="$HDFS_CKPT_URI/global_step_$1"
   [ -d "$src" ] || { _log "src vanished: $src"; return 1; }
   local t0=$(date +%s) bytes=$(du -sb "$src" | cut -f1) nsrc=$(find "$src" -type f | wc -l)   # captured BEFORE the copy: verl (keep=1) may rotate $src away right after
-  _rm_retry "$dst"
+  # Never copy over an existing/partial dst: fuse cannot rm -rf directory trees and overwriting files
+  # through fuse is very slow (run #5). Move a leftover aside (rename works), copy into a fresh dir.
+  if [ -e "$dst" ]; then
+    _rm_retry "$dst"
+    [ -e "$dst" ] && { mv "$dst" "$dst.stale.$(date +%s)" 2>/dev/null && _log "moved leftover $dst aside" || { _log "cannot clear $dst"; return 1; }; }
+  fi
+  local final="$dst"; dst="$dst.tmp"; rm -rf "$dst" 2>/dev/null; mv "$dst" "$dst.stale.$(date +%s)" 2>/dev/null
   if [ "${SYNC_MODE:-cli}" = cli ]; then
     # per-file put with 3 attempts alternating the JVM IP-stack flags (datanodes answer on IPv4 or
     # IPv6 and the JVM picks one stack; "Protocol family unavailable" is the symptom). First error kept.
@@ -46,6 +52,7 @@ _upload_dir() {  # $1 = step N
   fi
   local ndst=$(find "$dst" -type f 2>/dev/null | wc -l) bdst=$(du -sb "$dst" 2>/dev/null | cut -f1)
   if [ "$nsrc" = "$ndst" ] && [ "$bytes" = "$bdst" ]; then
+    mv "$dst" "$final" || { _log "rename $dst -> $final FAILED"; return 1; }; dst="$final"
     touch "$dst/.COMPLETE"; echo "$n" > "$HDFS_CKPT/latest_synced.txt"
     _log "uploaded global_step_$n: $((bytes/1000000)) MB in $(( $(date +%s)-t0 )) s ($(( bytes/1000000/($(date +%s)-t0+1) )) MB/s, $nsrc files)"
     return 0
@@ -58,8 +65,10 @@ _prune_hdfs() {
   # newest complete one (failed/partial mirrors otherwise accumulate ~113 GB per save; run #4 left
   # 7 of them). The newest dir is never touched here (it may be mid-upload).
   local latest_complete=$(ls -d "$HDFS_CKPT"/global_step_*/.COMPLETE 2>/dev/null | sed 's|.*global_step_\([0-9]*\)/.*|\1|' | sort -n | tail -1)
-  local newest=$(ls -d "$HDFS_CKPT"/global_step_* 2>/dev/null | sed 's/.*global_step_//' | sort -n | tail -1)
-  ls -d "$HDFS_CKPT"/global_step_* 2>/dev/null | sed 's/.*global_step_//' | sort -n | while read -r n; do
+  local newest=$(ls -d "$HDFS_CKPT"/global_step_* 2>/dev/null | grep -E 'global_step_[0-9]+$' | sed 's/.*global_step_//' | sort -n | tail -1)
+  # stale/tmp leftovers (fuse cannot rm -rf them): try the CLI, ignore failures
+  for d in "$HDFS_CKPT"/global_step_*.stale.* "$HDFS_CKPT"/global_step_*.tmp; do [ -e "$d" ] && _rm_retry "$d" >/dev/null 2>&1; done
+  ls -d "$HDFS_CKPT"/global_step_* 2>/dev/null | grep -E 'global_step_[0-9]+$' | sed 's/.*global_step_//' | sort -n | while read -r n; do
     [ "$n" = "$newest" ] && continue
     if [ -f "$HDFS_CKPT/global_step_$n/.COMPLETE" ]; then
       ls -d "$HDFS_CKPT"/global_step_*/.COMPLETE 2>/dev/null | sed 's|.*global_step_\([0-9]*\)/.*|\1|' | sort -n | head -n -$KEEP_HDFS | grep -qx "$n" && { _log "pruning HDFS global_step_$n (complete, beyond keep=$KEEP_HDFS)"; _rm_retry "$HDFS_CKPT/global_step_$n"; }
