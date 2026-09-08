@@ -17,7 +17,7 @@ _log() { echo "[ckpt-sync] $* $(date '+%H:%M:%S')"; }
 _is_complete() { local d=$1; if [ "${NNODES:-1}" -gt 1 ]; then [ "$(ls "$d"/.COMPLETE.* 2>/dev/null | wc -l)" -ge "${NNODES}" ]; else [ -f "$d/.COMPLETE" ]; fi; }
 _complete_steps() { local d; for d in "$HDFS_CKPT"/global_step_*; do [ -d "$d" ] && _is_complete "$d" && basename "$d" | sed 's/global_step_//'; done | sort -n; }
 _mine() { # keep files this node needs: everything non-sharded + shards whose rank // N_GPUS == NODE_RANK
-  local f=$1 r; r=$(echo "$f" | sed -n 's/.*_rank_\([0-9]*\)\.pt$//p'); [ -z "$r" ] && return 0; [ $(( r / ${N_GPUS:-8} )) = "${NODE_RANK:-0}" ]; }
+  local f=$1 r; case "$f" in *_rank_*.pt) r=${f##*_rank_}; r=${r%.pt};; *) return 0;; esac; [[ "$r" =~ ^[0-9]+$ ]] || return 0; [ $(( r / ${N_GPUS:-8} )) = "${NODE_RANK:-0}" ]; }
 # delete a path under $HDFS_CKPT: hdfs CLI first (fuse rm -rf of directory trees is unreliable), fuse fallback
 _rm_retry() {
   local p=$1 i uri="${HDFS_CKPT_URI}${1#"$HDFS_CKPT"}"
