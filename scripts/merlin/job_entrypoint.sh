@@ -100,6 +100,16 @@ ckpt_restore >> "$RUNS/ckpt_sync.log" 2>&1; tail -2 "$RUNS/ckpt_sync.log"
 ckpt_sync_loop >> "$RUNS/ckpt_sync.log" 2>&1 &
 SYNC_PID=$!
 
+# ── host stats every 30 s (memory / load / process counts / top RSS) -> $RUNS/host_stats.log ────
+( while true; do
+    { echo "=== $(date '+%m-%d %H:%M:%S') load=$(cut -d' ' -f1-3 /proc/loadavg) procs=$(ls /proc | grep -c '^[0-9]') py=$(pgrep -c python)";
+      free -g | awk 'NR==2{print "mem_total="$2"G used="$3"G free="$4"G avail="$7"G"}';
+      ps -eo rss=,comm= --sort=-rss 2>/dev/null | head -4 | awk '{printf "%s %.1fG; ", $2, $1/1048576}'; echo;
+      nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader 2>/dev/null | paste -sd' ' | cut -c1-200;
+      dmesg -T 2>/dev/null | grep -i -E 'killed process|out of memory' | tail -2; } >> "$RUNS/host_stats.log" 2>&1
+    sleep 30; done ) &
+HOST_STATS_PID=$!
+
 # ── train ───────────────────────────────────────────────────────────────────
 export MODEL_PATH=$MODEL_LOCAL
 export PROJECT_DIR=$XD/supo_codegym VERL_DIR=$XD/external/verl VENV=$XD/envs/supo
@@ -108,6 +118,7 @@ LOG=$RUNS/train_$(date +%Y%m%d_%H%M%S).log
 echo "[job] launching training, log=$LOG"
 bash "$XD/supo_codegym/scripts/train_codegym.sh" 2>&1 | tee "$LOG"
 rc=${PIPESTATUS[0]}
+kill $HOST_STATS_PID 2>/dev/null
 ckpt_drain >> "$RUNS/ckpt_sync.log" 2>&1   # NOT piped: a pipe forks a subshell that cannot `wait` on SYNC_PID
 tail -3 "$RUNS/ckpt_sync.log"
 if [ $rc -eq 0 ]; then touch "$RUNS/DONE"; else echo "rc=$rc $(date)" >> "$RUNS/FAILED"; fi

@@ -245,11 +245,27 @@ class CodeGymEnv:
         return await loop.run_in_executor(self.executor(), self.reward_sync)
 
 
+_spawn_sems: dict[int, asyncio.Semaphore] = {}   # one per event loop (= per agent-loop worker process)
+
+
+def _spawn_semaphore() -> asyncio.Semaphore:
+    """Stagger sandbox process start-ups. A full batch (128 prompts x 8 rollouts = 1024 rollouts,
+    128 per agent-loop worker) otherwise spawns every interpreter at once; under ray each spawn also
+    re-imports the ray worker main module, and the burst starved the vLLM engine (arms
+    d1725c2404e369a3 / 92cf2bb1d2ccd525 died with a 300 s execute_model timeout)."""
+    loop = asyncio.get_running_loop()
+    sem = _spawn_sems.get(id(loop))
+    if sem is None:
+        sem = _spawn_sems[id(loop)] = asyncio.Semaphore(int(os.environ.get("CODEGYM_SPAWN_CONCURRENCY", "16")))
+    return sem
+
+
 async def create_env(registry: EnvCodeRegistry, env_str: str) -> CodeGymEnv:
     env_key, class_name, class_env_str = parse_env_str(env_str)
-    env = CodeGymEnv(registry[env_key], class_name, class_env_str)
     loop = asyncio.get_running_loop()
-    ok, msg = await loop.run_in_executor(CodeGymEnv.executor(), env.wait_started)
+    async with _spawn_semaphore():
+        env = CodeGymEnv(registry[env_key], class_name, class_env_str)
+        ok, msg = await loop.run_in_executor(CodeGymEnv.executor(), env.wait_started)
     if not ok:
         raise RuntimeError(f"env start failed for {env_key}: {msg}")
     return env

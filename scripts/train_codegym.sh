@@ -51,6 +51,10 @@ PPO_MAX_TOKENS=${PPO_MAX_TOKENS:-$SEQ_LEN}
 LOGP_MAX_TOKENS=${LOGP_MAX_TOKENS:-$((2 * SEQ_LEN))}
 
 export PYTHONPATH="$OVERLAY:$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+# vLLM's executor kills the engine when one execute_model RPC exceeds this (default 300 s); a
+# host-side stall (sandbox spawn burst) must not take the rollout engine down. Ray workers inherit it.
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXEC_TIMEOUT:-3600}
+export CODEGYM_SPAWN_CONCURRENCY=${CODEGYM_SPAWN_CONCURRENCY:-16}
 export WANDB_RUN_ID=${WANDB_RUN_ID:-$EXP_NAME}
 export WANDB_RESUME=${WANDB_RESUME:-allow}
 export WANDB_PROJECT=${WANDB_PROJECT:-supo_codegym}
