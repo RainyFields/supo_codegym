@@ -54,8 +54,18 @@ _upload_dir() {  # $1 = step N
 }
 
 _prune_hdfs() {
-  ls -d "$HDFS_CKPT"/global_step_* 2>/dev/null | sed 's/.*global_step_//' | sort -n | head -n -$KEEP_HDFS | while read -r n; do
-    [ -f "$HDFS_CKPT/global_step_$n/.COMPLETE" ] && { _log "pruning HDFS global_step_$n"; _rm_retry "$HDFS_CKPT/global_step_$n"; }
+  # keep the newest KEEP_HDFS complete checkpoints; also drop incomplete dirs that are older than the
+  # newest complete one (failed/partial mirrors otherwise accumulate ~113 GB per save; run #4 left
+  # 7 of them). The newest dir is never touched here (it may be mid-upload).
+  local latest_complete=$(ls -d "$HDFS_CKPT"/global_step_*/.COMPLETE 2>/dev/null | sed 's|.*global_step_\([0-9]*\)/.*|\1|' | sort -n | tail -1)
+  local newest=$(ls -d "$HDFS_CKPT"/global_step_* 2>/dev/null | sed 's/.*global_step_//' | sort -n | tail -1)
+  ls -d "$HDFS_CKPT"/global_step_* 2>/dev/null | sed 's/.*global_step_//' | sort -n | while read -r n; do
+    [ "$n" = "$newest" ] && continue
+    if [ -f "$HDFS_CKPT/global_step_$n/.COMPLETE" ]; then
+      ls -d "$HDFS_CKPT"/global_step_*/.COMPLETE 2>/dev/null | sed 's|.*global_step_\([0-9]*\)/.*|\1|' | sort -n | head -n -$KEEP_HDFS | grep -qx "$n" && { _log "pruning HDFS global_step_$n (complete, beyond keep=$KEEP_HDFS)"; _rm_retry "$HDFS_CKPT/global_step_$n"; }
+    elif [ -n "$latest_complete" ] && [ "$n" -lt "$latest_complete" ]; then
+      _log "pruning HDFS global_step_$n (incomplete, older than complete $latest_complete)"; _rm_retry "$HDFS_CKPT/global_step_$n"
+    fi
   done
 }
 
