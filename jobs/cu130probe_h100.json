@@ -1,0 +1,58 @@
+{
+ "name": "supo-codegym-cu130probe-h100",
+ "namespace": "/user/xiaoxuan.lei",
+ "job_type": "train",
+ "description": "1-GPU probe: full cu130 stack (torch/flash-attn/NCCL/vLLM) on R535 with CUDA 13.0 compat libcuda",
+ "attachments": [
+  {
+   "kind": "hdfs_volume",
+   "hdfs_volume_attachment": {
+    "hdfs_volumes": [
+     {
+      "access_mode": "RW",
+      "extra": "",
+      "mnt": "/mnt/hdfs/mlsys",
+      "path": "hdfs://harunava/home/byte_arnold_va_ssd/mlsys",
+      "roles": [
+       "worker"
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "job_config": {
+  "job_template_config": {
+   "entrypoint_full_script": "cp /mnt/hdfs/mlsys/users/xiaoxuan/supo_codegym/job-assets/cu130_probe.sh /tmp/cu130_probe.sh && bash /tmp/cu130_probe.sh",
+   "git_repo": {
+    "repo_name": ""
+   },
+   "image_meta": {
+    "image_source": "url",
+    "image_url": "aliyun-va-hub.byted.org/arnold/modelchef-gpu:1.0.0.38"
+   },
+   "env_map": {}
+  }
+ },
+ "resource_config": {
+  "resource_backend": "arnold",
+  "arnold_resource_config": {
+   "cluster_ids": [
+    4
+   ],
+   "cluster_select_mode": "single",
+   "group_id": 765,
+   "roles": [
+    {
+     "name": "worker",
+     "num": 1,
+     "gpu": 1,
+     "gpu_type": "H100_SXM_80GB",
+     "cpu": 16,
+     "memory_mb": 250000,
+     "queue_name": "compute-89-aliyun.va-cloudnative-aigcp-ark.eng.algorithm-guarantee"
+    }
+   ]
+  }
+ }
+}
