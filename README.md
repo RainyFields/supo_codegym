@@ -83,3 +83,12 @@ the R535 pods — `cuInit` returns 0 with driver API 13000 and the H100 enumerat
 table listing R570+ only. So cu130 is probably usable here by exporting `LD_LIBRARY_PATH=<compat dir>` in the
 entrypoint (untested beyond cuInit: no torch/NCCL/vLLM run yet). The cu130 venv is kept at
 `~/xiaoxuan/envs/supo-cu130`; spec `jobs/compat13probe_h100.json` is the probe.
+
+**Update 2026-09-08 13:45 (probes 1dd4f29519f37e88 / afdd17b9e6019e0d): the cu130 failure was the job IMAGE TAG.**
+Batch jobs use `modelchef-gpu:1.0.0.38` (only `/usr/local/cuda-12.9` + CUDA 12.9 compat libcuda 575.57.08); the
+Workbench devbox template is `modelchef-gpu:1.0.0.54` (`/usr/local/cuda-13.0` + CUDA 13.0 compat libcuda
+580.126.20). On the same R535 H100 node, the original cu130 venv runs unmodified on image 1.0.0.54
+(`torch.zeros(1,device='cuda')+1` OK, bf16 matmul 188 TFLOP/s), and also on 1.0.0.38 if the 13.0 compat dir is
+staged and put on LD_LIBRARY_PATH (202 TFLOP/s). NCCL / flash-attn / vLLM verdicts: see probes #5 in jobs/JOBS.tsv.
+To move a job to cu130: set `image_url` to `...modelchef-gpu:1.0.0.54` and restore `envs-supo-cu130` (23 chunks
+under `job-assets/cu130_parts/`).
