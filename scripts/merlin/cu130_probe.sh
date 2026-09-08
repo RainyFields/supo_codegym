@@ -4,12 +4,13 @@
 set -uo pipefail
 XD=/home/tiger/xiaoxuan; ASSETS=/mnt/hdfs/mlsys/users/xiaoxuan/supo_codegym/job-assets
 echo "[probe] node=$(hostname) $(date)"; nvidia-smi --query-gpu=name,driver_version --format=csv,noheader | head -1
-mkdir -p /tmp/c13 && tar xzf $ASSETS/cuda-13.0-compat.tar.gz -C /tmp/c13 && echo "[probe] compat: $(ls /tmp/c13/compat | tr '\n' ' ')"
-echo "[probe] restoring cu130 venv from $(ls $ASSETS/cu130_parts/ | grep -c part) chunks $(date)"; cat $ASSETS/cu130_parts/envs-supo-cu130.tar.gz.part* > /tmp/envs-supo-cu130.tar.gz && echo "[probe] tarball md5 $(md5sum /tmp/envs-supo-cu130.tar.gz | cut -c1-12) (manifest: $(cat $ASSETS/cu130_parts/MANIFEST))" && tar xzf /tmp/envs-supo-cu130.tar.gz -C / || { echo "[probe] FATAL venv untar"; exit 43; }
+echo "[probe] image=$ARNOLD_BASE_IMAGE USE_COMPAT=${USE_COMPAT:-1}"; ls -d /usr/local/cuda*; ls /usr/local/cuda/compat 2>/dev/null | grep -o "libcuda.so.[0-9][0-9.]*"
+if [ "${USE_COMPAT:-1}" = 1 ]; then mkdir -p /tmp/c13 && tar xzf $ASSETS/cuda-13.0-compat.tar.gz -C /tmp/c13 && echo "[probe] compat: $(ls /tmp/c13/compat | tr '\n' ' ')"; fi
+echo "[probe] restoring cu130 venv from $(ls $ASSETS/cu130_parts/ | grep -c 'part[0-9][0-9]$') chunks $(date)"; cat $(ls $ASSETS/cu130_parts/envs-supo-cu130.tar.gz.part[0-9][0-9] | sort) > /tmp/envs-supo-cu130.tar.gz && echo "[probe] tarball md5 $(md5sum /tmp/envs-supo-cu130.tar.gz | cut -c1-12) (manifest: $(cat $ASSETS/cu130_parts/MANIFEST))" && tar xzf /tmp/envs-supo-cu130.tar.gz -C / || { echo "[probe] FATAL venv untar"; exit 43; }
 PY=$XD/envs/supo-cu130/bin/python; $PY -c "import torch; print('[probe] torch', torch.__version__, 'cuda', torch.version.cuda)"
 echo "[probe] staging model $(date)"; mkdir -p /tmp/models && cp -r /mnt/hdfs/mlsys/models/Qwen3.5-9B /tmp/models/ && echo "[probe] model staged $(date)"
-export LD_LIBRARY_PATH=/tmp/c13/compat:${LD_LIBRARY_PATH:-} TMPDIR=/tmp/supo_tmp; mkdir -p $TMPDIR
-echo "===== A. torch without compat (expect failure) ====="
+if [ "${USE_COMPAT:-1}" = 1 ]; then export LD_LIBRARY_PATH=/tmp/c13/compat:${LD_LIBRARY_PATH:-}; fi; export TMPDIR=/tmp/supo_tmp; mkdir -p $TMPDIR
+echo "===== A. torch with the image's own libcuda (no staged compat) ====="
 env -u LD_LIBRARY_PATH $PY -c "import torch; print(torch.zeros(1,device='cuda')+1)" 2>&1 | tail -1
 echo "===== B. torch with CUDA-13.0 compat ====="
 $PY - <<'PYEOF' 2>&1 | grep -v Warning
