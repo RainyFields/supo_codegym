@@ -33,7 +33,10 @@ EXTRA_ARGS=${EXTRA_ARGS:-}
 
 case "$ARM" in
   supo) WORKING_CONTEXT=4096;  MAX_SUMMARIES=7; PROMPT_LEN=4096; RESP_LEN=5120;  MAX_MODEL_LEN=10240; TAG=4kx8 ;;
-  grpo) WORKING_CONTEXT=32768; MAX_SUMMARIES=0; PROMPT_LEN=2048; RESP_LEN=30720; MAX_MODEL_LEN=34816; TAG=32k ;;
+  grpo) WORKING_CONTEXT=32768; MAX_SUMMARIES=0; PROMPT_LEN=2048; RESP_LEN=30720; MAX_MODEL_LEN=34816; TAG=32k
+        # 35K-token sequences OOM the FSDP update (74 GB in the logits/entropy backward, run 48d248234f287e0c):
+        # fused linear+log-prob kernels (verl monkey_patch supports qwen3_5) never materialize full logits.
+        USE_FUSED=${USE_FUSED:-True}; OPT_OFFLOAD=${OPT_OFFLOAD:-True} ;;
   *) echo "unknown ARM=$ARM" >&2; exit 2 ;;
 esac
 EXP_NAME=${EXP_NAME:-${ARM}_codegym_qwen35-9b_${TAG}${RUN_TAG}}
@@ -92,7 +95,9 @@ exec "$VENV/bin/python" -m verl.trainer.main_ppo ${HYDRA_EXTRA:-} \
   actor_rollout_ref.actor.entropy_from_logits_with_chunking=True \
   actor_rollout_ref.actor.entropy_checkpointing=True \
   actor_rollout_ref.actor.fsdp_config.param_offload=False \
-  actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+  actor_rollout_ref.actor.fsdp_config.optimizer_offload=${OPT_OFFLOAD:-False} \
+  actor_rollout_ref.model.use_fused_kernels=${USE_FUSED:-False} \
+  actor_rollout_ref.model.fused_kernel_options.impl_backend=${FUSED_BACKEND:-triton} \
   actor_rollout_ref.actor.fsdp_config.reshard_after_forward=True \
   actor_rollout_ref.actor.fsdp_config.ulysses_sequence_parallel_size=${SP_SIZE:-1} \
   actor_rollout_ref.rollout.name=vllm \
