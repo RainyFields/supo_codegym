@@ -210,8 +210,9 @@ class SupoAgentLoop(AgentLoopBase):
             t0 = trajs[0]
             t0.token_ids.append(self.tokenizer.eos_token_id)
             t0.response_mask.append(0)
-            if t0.response_logprobs:
-                t0.response_logprobs.append(0.0)
+            # always carry a log-prob for the placeholder token: a row without rollout_log_probs makes
+            # verl's rollout-vs-actor log-prob metrics KeyError at the next step (supo run fd53042a146a3792)
+            t0.response_logprobs = [0.0]
             non_empty = [t0]
         trajs = non_empty
         n_trajs = len(trajs)
