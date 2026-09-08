@@ -3,3 +3,4 @@ submitted_sf	name	sid	url	gpu	spec	note
 2026-09-07 15:13	supo-codegym-driverprobe-h100	f91e965081e67510	https://ml.tiktok-row.net/development/instance/jobs/f91e965081e67510	H100_SXM_80GB	jobs/driverprobe_h100.json	
 2026-09-07 15:14	supo-codegym-driverprobe-a100	9c2ce59cecd0abc0	https://ml.tiktok-row.net/development/instance/jobs/9c2ce59cecd0abc0	A100_SXM_80GB	jobs/driverprobe_a100.json	
 2026-09-07 17:03	supo-codegym-supo_smoke-h100	dae034f8b1a5cfdc	https://ml.tiktok-row.net/development/instance/jobs/dae034f8b1a5cfdc	H100_SXM_80GB	jobs/supo_smoke_h100.json	smoke resubmit on cu129 stack (first run 510a802886e902f6 failed: driver R535)
+2026-09-07 18:06	supo-codegym-supo_smoke-h100	5dd1a81ef5db89a8	https://ml.tiktok-row.net/development/instance/jobs/5dd1a81ef5db89a8	H100_SXM_80GB	jobs/supo_smoke_h100.json	smoke rerun #3: +min/max_global_steps tags fix (886677c)
