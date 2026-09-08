@@ -94,9 +94,9 @@ export CKPT_DIR=/tmp/supo_ckpt/$EXP_NAME
 export HDFS_CKPT=$PROJECT_ROOT/checkpoints/$EXP_NAME
 export HDFS_CKPT_URI=hdfs://harunava/home/byte_arnold_va_ssd/mlsys/users/xiaoxuan/supo_codegym/checkpoints/$EXP_NAME
 export SYNC_STOP_FILE=/tmp/supo_sync_stop; rm -f $SYNC_STOP_FILE
-df -h /tmp | tail -1 | awk '{print "[job] /tmp disk: size="$2" used="$3" avail="$4}'
+df -h /tmp | tail -1 | awk '{print "[job] /tmp disk: size="$2" used="$3" avail="$4}' | tee -a "$RUNS/ckpt_sync.log"
 source "$XD/supo_codegym/scripts/merlin/ckpt_sync.sh"
-ckpt_restore 2>&1 | tee -a "$RUNS/ckpt_sync.log"
+ckpt_restore >> "$RUNS/ckpt_sync.log" 2>&1; tail -2 "$RUNS/ckpt_sync.log"
 ckpt_sync_loop >> "$RUNS/ckpt_sync.log" 2>&1 &
 SYNC_PID=$!
 
@@ -108,7 +108,8 @@ LOG=$RUNS/train_$(date +%Y%m%d_%H%M%S).log
 echo "[job] launching training, log=$LOG"
 bash "$XD/supo_codegym/scripts/train_codegym.sh" 2>&1 | tee "$LOG"
 rc=${PIPESTATUS[0]}
-ckpt_drain 2>&1 | tee -a "$RUNS/ckpt_sync.log"
+ckpt_drain >> "$RUNS/ckpt_sync.log" 2>&1   # NOT piped: a pipe forks a subshell that cannot `wait` on SYNC_PID
+tail -3 "$RUNS/ckpt_sync.log"
 if [ $rc -eq 0 ]; then touch "$RUNS/DONE"; else echo "rc=$rc $(date)" >> "$RUNS/FAILED"; fi
 echo "[job] done rc=$rc $(date)"
 exit $rc

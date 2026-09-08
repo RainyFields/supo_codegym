@@ -35,8 +35,9 @@
     "ARM": "supo",
     "RUN_TAG": "",
     "TOTAL_STEPS": "100",
-    "SAVE_FREQ": "10",
+    "SAVE_FREQ": 5,
     "TEST_FREQ": "10",
+    "PUT_PAR": "16",
     "MIN_GPUS": "8",
     "N_GPUS": "8"
    }
