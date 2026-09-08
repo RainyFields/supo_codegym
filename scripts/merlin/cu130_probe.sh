@@ -21,7 +21,8 @@ for _ in range(20): c=a@a
 torch.cuda.synchronize(); print(f"matmul 8192^2 bf16 x20: {(time.time()-t):.2f}s  ({20*2*8192**3/(time.time()-t)/1e12:.0f} TFLOP/s) sum={c.float().sum().item():.3e}")
 x=torch.randn(1000,1000,device='cuda'); print("cublas/cusolver:", torch.linalg.inv(x).shape, "conv:", torch.nn.functional.conv2d(torch.randn(1,3,64,64,device='cuda'), torch.randn(8,3,3,3,device='cuda')).shape)
 import torch.distributed as dist, os
-os.environ.update(MASTER_ADDR='127.0.0.1', MASTER_PORT='29511', RANK='0', WORLD_SIZE='1')
+import socket; sk=socket.socket(); sk.bind(('127.0.0.1',0)); port=sk.getsockname()[1]; sk.close()
+os.environ.update(MASTER_ADDR='127.0.0.1', MASTER_PORT=str(port), RANK='0', WORLD_SIZE='1')
 dist.init_process_group('nccl'); t=torch.ones(1024,device='cuda'); dist.all_reduce(t); print("nccl all_reduce OK", t[0].item()); dist.destroy_process_group()
 from flash_attn import flash_attn_varlen_func
 q=torch.randn(2048,16,128,device='cuda',dtype=torch.bfloat16); cu=torch.tensor([0,1024,2048],device='cuda',dtype=torch.int32)
@@ -29,7 +30,7 @@ o=flash_attn_varlen_func(q,q,q,cu,cu,1024,1024,causal=True); print("flash_attn v
 print("B OK")
 PYEOF
 echo "===== C. vLLM generate (Qwen3.5-9B, 1 GPU) ====="
-VLLM_USE_FLASHINFER_SAMPLER=0 timeout 1500 $PY - <<'PYEOF' 2>&1 | grep -v Warning | grep -i 'probe\|error\|Traceback\|vllm\|generated\|tok/s' | tail -25
+cat > /tmp/vllm_probe.py <<'PYEOF'
 import time
 from vllm import LLM, SamplingParams
 t=time.time()
@@ -40,4 +41,5 @@ t=time.time(); outs=llm.generate(["Write a Python function that returns the n-th
 ntok=sum(len(o.outputs[0].token_ids) for o in outs); print(f"[probe] generated {ntok} tokens for 8 prompts in {dt:.1f}s ({ntok/dt:.0f} tok/s)")
 print("[probe] sample:", outs[0].outputs[0].text[:300].replace('\n',' | ')); print("[probe] C OK")
 PYEOF
+VLLM_USE_FLASHINFER_SAMPLER=0 timeout 1500 $PY /tmp/vllm_probe.py 2>&1 | grep -v Warning | grep -i 'probe\|error\|Traceback\|generated\|tok/s\|driver' | tail -25
 echo "[probe] done $(date)"; exit 0
