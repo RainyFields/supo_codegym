@@ -12,34 +12,47 @@ echo "[probe] staging model $(date)"; mkdir -p /tmp/models && cp -r /mnt/hdfs/ml
 if [ "${USE_COMPAT:-1}" = 1 ]; then export LD_LIBRARY_PATH=/tmp/c13/compat:${LD_LIBRARY_PATH:-}; fi; export TMPDIR=/tmp/supo_tmp; mkdir -p $TMPDIR
 echo "===== A. torch with the image's own libcuda (no staged compat) ====="
 env -u LD_LIBRARY_PATH $PY -c "import torch; print(torch.zeros(1,device='cuda')+1)" 2>&1 | tail -1
-echo "===== B. torch with CUDA-13.0 compat ====="
-$PY - <<'PYEOF' 2>&1 | grep -v Warning
+echo "===== B. torch with CUDA-13.0 compat (sub-steps, unbuffered, exit codes) ====="
+export NCCL_DEBUG=WARN
+cat > /tmp/b1.py <<'PYEOF'
 import torch, time
-print("driver_api", torch.cuda.driver_version() if hasattr(torch.cuda,'driver_version') else '?', "device", torch.cuda.get_device_name(0))
+print("driver_api", torch.cuda.driver_version() if hasattr(torch.cuda,'driver_version') else '?', "device", torch.cuda.get_device_name(0), flush=True)
 a=torch.randn(8192,8192,device='cuda',dtype=torch.bfloat16); torch.cuda.synchronize(); t=time.time()
 for _ in range(20): c=a@a
-torch.cuda.synchronize(); print(f"matmul 8192^2 bf16 x20: {(time.time()-t):.2f}s  ({20*2*8192**3/(time.time()-t)/1e12:.0f} TFLOP/s) sum={c.float().sum().item():.3e}")
-x=torch.randn(1000,1000,device='cuda'); print("cublas/cusolver:", torch.linalg.inv(x).shape, "conv:", torch.nn.functional.conv2d(torch.randn(1,3,64,64,device='cuda'), torch.randn(8,3,3,3,device='cuda')).shape)
-import torch.distributed as dist, os
-import socket; sk=socket.socket(); sk.bind(('127.0.0.1',0)); port=sk.getsockname()[1]; sk.close()
-os.environ.update(MASTER_ADDR='127.0.0.1', MASTER_PORT=str(port), RANK='0', WORLD_SIZE='1')
-dist.init_process_group('nccl'); t=torch.ones(1024,device='cuda'); dist.all_reduce(t); print("nccl all_reduce OK", t[0].item()); dist.destroy_process_group()
-from flash_attn import flash_attn_varlen_func
-q=torch.randn(2048,16,128,device='cuda',dtype=torch.bfloat16); cu=torch.tensor([0,1024,2048],device='cuda',dtype=torch.int32)
-o=flash_attn_varlen_func(q,q,q,cu,cu,1024,1024,causal=True); print("flash_attn varlen OK", o.shape, o.float().abs().mean().item())
-print("B OK")
+torch.cuda.synchronize(); dt=time.time()-t; print(f"matmul 8192^2 bf16 x20: {dt:.2f}s ({20*2*8192**3/dt/1e12:.0f} TFLOP/s) sum={c.float().sum().item():.3e}", flush=True)
+x=torch.randn(1000,1000,device='cuda'); print("cusolver inv:", torch.linalg.inv(x).shape, "cudnn conv:", torch.nn.functional.conv2d(torch.randn(1,3,64,64,device='cuda'), torch.randn(8,3,3,3,device='cuda')).shape, flush=True)
+print("B1 OK", flush=True)
 PYEOF
+cat > /tmp/b2.py <<'PYEOF'
+import torch
+from flash_attn import flash_attn_varlen_func, flash_attn_func
+q=torch.randn(2,1024,16,128,device='cuda',dtype=torch.bfloat16)
+o=flash_attn_func(q,q,q,causal=True); torch.cuda.synchronize(); print("flash_attn_func OK", o.shape, float(o.float().abs().mean()), flush=True)
+q=torch.randn(2048,16,128,device='cuda',dtype=torch.bfloat16); cu=torch.tensor([0,1024,2048],device='cuda',dtype=torch.int32)
+o=flash_attn_varlen_func(q,q,q,cu,cu,1024,1024,causal=True); torch.cuda.synchronize(); print("flash_attn_varlen OK", o.shape, flush=True)
+print("B2 OK", flush=True)
+PYEOF
+cat > /tmp/b3.py <<'PYEOF'
+import os, socket, torch, torch.distributed as dist
+sk=socket.socket(); sk.bind(('127.0.0.1',0)); port=sk.getsockname()[1]; sk.close()
+os.environ.update(MASTER_ADDR='127.0.0.1', MASTER_PORT=str(port), RANK='0', WORLD_SIZE='1')
+dist.init_process_group('nccl'); print("nccl init OK", flush=True)
+t=torch.ones(1024,device='cuda'); dist.all_reduce(t); torch.cuda.synchronize(); print("nccl all_reduce OK", float(t[0]), flush=True)
+dist.destroy_process_group(); print("B3 OK", flush=True)
+PYEOF
+for b in b1 b2 b3; do $PY -u /tmp/$b.py 2>&1 | grep -v 'Warning\|warnings.warn' | tail -6; rc=${PIPESTATUS[0]}; echo "[probe] $b exit=$rc $( [ $rc -gt 128 ] && echo "(signal $((rc-128)))" )"; done
 echo "===== C. vLLM generate (Qwen3.5-9B, 1 GPU) ====="
 cat > /tmp/vllm_probe.py <<'PYEOF'
 import time
 from vllm import LLM, SamplingParams
-t=time.time()
-llm=LLM(model='/tmp/models/Qwen3.5-9B', dtype='bfloat16', max_model_len=4096, gpu_memory_utilization=0.85, enforce_eager=False, additional_config={'gdn_prefill_backend':'triton'})
-print(f"[probe] vLLM engine up in {time.time()-t:.0f}s")
-sp=SamplingParams(temperature=0, max_tokens=128)
-t=time.time(); outs=llm.generate(["Write a Python function that returns the n-th Fibonacci number, then briefly explain it."]*8, sp); dt=time.time()-t
-ntok=sum(len(o.outputs[0].token_ids) for o in outs); print(f"[probe] generated {ntok} tokens for 8 prompts in {dt:.1f}s ({ntok/dt:.0f} tok/s)")
-print("[probe] sample:", outs[0].outputs[0].text[:300].replace('\n',' | ')); print("[probe] C OK")
+if __name__ == '__main__':
+  t=time.time()
+  llm=LLM(model='/tmp/models/Qwen3.5-9B', dtype='bfloat16', max_model_len=4096, gpu_memory_utilization=0.85, enforce_eager=False, additional_config={'gdn_prefill_backend':'triton'})
+  print(f"[probe] vLLM engine up in {time.time()-t:.0f}s")
+  sp=SamplingParams(temperature=0, max_tokens=128)
+  t=time.time(); outs=llm.generate(["Write a Python function that returns the n-th Fibonacci number, then briefly explain it."]*8, sp); dt=time.time()-t
+  ntok=sum(len(o.outputs[0].token_ids) for o in outs); print(f"[probe] generated {ntok} tokens for 8 prompts in {dt:.1f}s ({ntok/dt:.0f} tok/s)")
+  print("[probe] sample:", outs[0].outputs[0].text[:300].replace('\n',' | ')); print("[probe] C OK")
 PYEOF
-VLLM_USE_FLASHINFER_SAMPLER=0 timeout 1500 $PY /tmp/vllm_probe.py 2>&1 | grep -v Warning | grep -i 'probe\|error\|Traceback\|generated\|tok/s\|driver' | tail -25
+VLLM_USE_FLASHINFER_SAMPLER=0 timeout 1500 $PY -u /tmp/vllm_probe.py 2>&1 | grep -v Warning | grep -i 'probe\|error\|Traceback\|generated\|tok/s\|driver' | tail -25
 echo "[probe] done $(date)"; exit 0
