@@ -1,0 +1,402 @@
+<title>CodeGym Trace Notebook</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{--bg:#F6F7F4;--ink:#1F2622;--mute:#6A736E;--rule:#D8DDD9;--env:#0F6E78;--envbg:#E7F2F1;--asst:#8A5A12;--asstbg:#F7EEDD;--code:#EDEFEA;--warn:#8C2F1E;--warnbg:#F6E3DE}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#151917;--ink:#E4E8E3;--mute:#9AA39D;--rule:#2C3330;--env:#6CC3CB;--envbg:#132A2C;--asst:#E0A94F;--asstbg:#2A2117;--code:#1E2422;--warn:#F08A72;--warnbg:#3A1E18}}
+:root[data-theme="dark"]{--bg:#151917;--ink:#E4E8E3;--mute:#9AA39D;--rule:#2C3330;--env:#6CC3CB;--envbg:#132A2C;--asst:#E0A94F;--asstbg:#2A2117;--code:#1E2422;--warn:#F08A72;--warnbg:#3A1E18}
+body{background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:15.5px;line-height:1.55;margin:0}
+main{max-width:76ch;margin:0 auto;padding:40px 22px 80px}
+h1,h2,h3{font-family:"Newsreader",Georgia,serif;font-weight:600;line-height:1.15;text-wrap:balance;margin:0}
+h1{font-size:2.3rem;letter-spacing:-.01em} h2{font-size:1.5rem;margin-top:2.6rem;padding-top:1rem;border-top:1px solid var(--rule)} h3{font-size:1.12rem;margin-top:1.6rem}
+p{margin:.7rem 0} .lede{font-size:1.08rem;color:var(--mute);margin:.6rem 0 0}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);font-weight:600}
+table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:.92rem;font-variant-numeric:tabular-nums} th,td{text-align:left;padding:.42rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top} th{color:var(--mute);font-weight:600;font-size:.8rem;letter-spacing:.04em;text-transform:uppercase} td.n{text-align:right} th.n{text-align:right}
+.wrap{overflow-x:auto}
+pre,code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.84rem}
+pre{background:var(--code);padding:.8rem 1rem;border-radius:4px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;margin:.6rem 0}
+code{background:var(--code);padding:.05em .3em;border-radius:3px}
+.ledger{border-left:2px solid var(--rule);margin:.8rem 0;display:flex;flex-direction:column;gap:6px}
+.turn{padding:.45rem .8rem;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.82rem;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.turn.a{background:var(--asstbg);margin-left:0} .turn.e{background:var(--envbg);margin-left:2.2rem}
+.who{font-family:"IBM Plex Sans",sans-serif;font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;font-weight:600;margin-bottom:.25rem} .a .who{color:var(--asst)} .e .who{color:var(--env)}
+.call{margin-top:.35rem;padding:.3rem .5rem;border:1px solid var(--asst);border-radius:3px;color:var(--asst)}
+.obs{color:var(--env)}
+.scroll{max-height:34rem;overflow:auto;border:1px solid var(--rule);border-radius:4px;padding:.4rem}
+.note{border-left:3px solid var(--warn);background:var(--warnbg);padding:.6rem .9rem;margin:.9rem 0;border-radius:0 4px 4px 0}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1.2rem;font-size:.92rem;margin:.6rem 0} .kv div:nth-child(odd){color:var(--mute)}
+.diff{display:grid;grid-template-columns:1fr 1fr;gap:.8rem} @media (max-width:640px){.diff{grid-template-columns:1fr}}
+small{color:var(--mute)}
+</style>
+<main>
+<div class="eyebrow">SUPO replication · CodeGym · Qwen3.5-9B · traces from validation step 40</div>
+<h1>CodeGym Trace Notebook</h1>
+<p class="lede">How a CodeGym episode works, three real episodes from our runs (a solved one, a failed one, one with summaries), the one environment that breaks under Python 3.12 and the placeholder row our trainer emits for it, and why our accuracy sits far above the paper's numbers.</p>
+
+<h2>1. How a CodeGym environment works</h2>
+<p>CodeGym (ByteDance Seed, arXiv 2509.17325) converts a static coding problem into an interactive, verifiable tool-use environment. An LLM wrote each environment as a small Gym-style Python class: the problem's atomic operations become named tools, the class keeps hidden state, and a <code>Done(answer)</code> tool checks the submitted answer against the oracle. We use the public HF release <code>VanishD/CodeGym</code> (envs_en: 23.5K environments; task_en_instruction_en_env: 80.1K task instances; each instance = environment + a JSON task configuration).</p>
+<p>One episode, in order:</p>
+<table><tr><th>Stage</th><th>What happens</th><th>In our replication</th></tr>
+<tr><td>Prompt</td><td>System turn lists every tool as a Python signature with a docstring; user turn gives the rules (one call per step, wait for the result, calls wrapped in <code>&lt;|FunctionCallBegin|&gt;…&lt;|FunctionCallEnd|&gt;</code> as a one-element JSON list) and the question.</td><td>Verbatim from the dataset; prompts capped at 1,536 tokens.</td></tr>
+<tr><td>Step</td><td>The policy emits one function call. The environment's <code>step(action_str)</code> parses it, mutates hidden state, and returns an observation string.</td><td>Each rollout gets its own spawned sandbox process running the env code (10 s step timeout); observations come back as <code>user</code> turns.</td></tr>
+<tr><td>Termination</td><td><code>finished()</code> turns true after <code>Done</code>; the oracle solution ran <em>solve_fc_round</em> calls (train mean 28, eval 40–90).</td><td>Budget H = 100 LLM calls; 10 consecutive turns without a call, a context overflow, or an env error end the episode as <em>overlong</em>.</td></tr>
+<tr><td>Reward</td><td><code>reward()</code> is binary: 1 if the answer passed to <code>Done</code> matches the oracle, else 0.</td><td><code>float(env.reward() &gt; 0)</code>; accuracy on the 128-seed eval set = mean of this.</td></tr></table>
+<p>The official server (github.com/StigLidu/CodeGym, <code>online_server/</code>) pins <strong>Python 3.11.2</strong> and exposes the same three methods (<code>step</code>, <code>finished</code>, <code>reward</code>) over HTTP. We run the same env code in-process instead of through that server; the venv is Python 3.12.12, which matters in section 5.</p>
+
+<h2>2. Full trace of a solved episode</h2>
+<p><small>GRPO-32K arm, validation step 40, seed with 32 tool calls, reward 1. Tools available (the system prompt shows full docstrings):</small></p>
+<pre>InitializeDP(rows: int, cols: int)
+CalculateDPValue(i: int, j: int, value: int)
+GetGridDimensions()
+GetGridCell(i: int, j: int)
+Observe()
+Done(answer: int)</pre>
+<p><strong>Question</strong></p>
+<pre>In an m×n grid, a robot is located at the top-left corner (marked as &#x27;S&#x27;) and needs to move to the bottom-right corner (marked as &#x27;E&#x27;). The robot can only move right or down. Some cells in the grid are blocked (marked as &#x27;#&#x27;) and the robot cannot pass through these cells, while open cells are marked as &#x27;.&#x27;. Your task is to determine the number of unique paths for the robot to go from &#x27;S&#x27; to &#x27;E&#x27; without passing through any blocked cells. For example, for the following 3×3 grid:
+```
+...
+.#.
+..E
+```
+There are 2 unique paths for the robot to move from the top-left corner to the bottom-right corner, so return 2.</pre>
+<p><small>The user turn also carries the standard rules block (same in every task):</small></p>
+<pre>Please answer the following question step by step according to the requirements below!
+
+1. **Do not** write code to answer the user&#x27;s question — you may only call the provided functions, and you may call at most **one function per step**.
+2. After you call a function, wait for the tool to return the result — do not assume what the result will be.
+3. If the tool’s description is unclear, you can try using it first, and then adjust your function call based on the returned result.
+4. Function calls should be wrapped with `&lt;|FunctionCallBegin|&gt;....&lt;|FunctionCallEnd|&gt;` and contain a JSON-formatted list. The list should include **one dictionary**, where each dictionary contains two parameters:
+
+   * `name`: the function name
+   * `parameters`: a dictionary of key-value pairs for the arguments
+
+Here’s an example of a function call:
+&lt;|FunctionCallBegin|&gt;[{&quot;name&quot;:&quot;function_name&quot;, &quot;parameters&quot;:{&quot;key1&quot;:&quot;value1&quot;, &quot;key2&quot;:&quot;value2&quot;}}]&lt;|FunctionCallEnd|&gt;
+
+**Extra requirements:**
+
+* Do not overthink; think briefly, then decide how to call the function.
+* Since you have many chances to call functions, you do not need to plan all steps in advance.
+* Do not try to solve the problem without using the tools.</pre>
+<p>The full transcript, assistant turns in amber and environment replies in teal. Note the environment answering <code>?</code> to <code>GetGridCell</code> and the model working around it by probing; this is the actual behaviour of that generated environment.</p>
+<div class="scroll"><div class="ledger"><div class="turn a"><div class="who">assistant · turn 1</div><div class="say">To solve this problem, I first need to understand the dimensions of the grid and the current state of the environment. I will start by calling `GetGridDimensions` to find out the number of rows and columns.</div><div class="call">[{&quot;name&quot;: &quot;GetGridDimensions&quot;, &quot;parameters&quot;:{}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">{&quot;rows&quot;: 3, &quot;cols&quot;: 4}</div></div>
+<div class="turn a"><div class="who">assistant · turn 2</div><div class="say">The grid has 3 rows and 4 columns. Now I need to initialize the DP table. According to the function description, `InitializeDP` sets all values to 0 and sets the starting point (0,0) to 1.</div><div class="call">[{&quot;name&quot;: &quot;InitializeDP&quot;, &quot;parameters&quot;: {&quot;rows&quot;: 3, &quot;cols&quot;: 4}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP table initialized successfully, size 3x4</div></div>
+<div class="turn a"><div class="who">assistant · turn 3</div><div class="say">The DP table is initialized. Now I need to understand the grid layout to know which cells are blocked. I will observe the environment to get the grid state.</div><div class="call">[{&quot;name&quot;: &quot;Observe&quot;, &quot;parameters&quot;:{}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP table initialized, size 3x4, 1 cells calculated so far</div></div>
+<div class="turn a"><div class="who">assistant · turn 4</div><div class="say">The observation message is a bit generic. I need to get the actual grid layout to know which cells are blocked (&#x27;#&#x27;) and which are open (&#x27;.&#x27;). I will iterate through the grid to check each cell. Let&#x27;s start by checking the grid dimensions again or trying to get cell states. I&#x27;ll check the cells row by row.
+
+First, let&#x27;s check the starting cell (0,0) and then move through the grid. Actually, I should check the grid content. Let me try to get the cell states for the entire grid. I&#x27;ll start by checking a few cells to understand the layout.
+
+Let&#x27;s check cell (0,0):</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 0, &quot;j&quot;: 0}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">?</div></div>
+<div class="turn a"><div class="who">assistant · turn 5</div><div class="say">The response &quot;?&quot; seems unclear. Let me try to get the grid dimensions again or check the Observe function again to see if it provides more details. Maybe I need to check the grid layout differently. Let me try to get the grid cell for (0,0) again or check other cells.
+
+Actually, looking at the Observe response &quot;DP table initialized, size 3x4, 1 cells calculated so far&quot;, it seems like the system is tracking the DP calculation progress. I need to figure out the grid layout. Let me try to get the grid cell states systematically.
+
+Let me check cell (0,0) again:</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 0, &quot;j&quot;: 0}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">?</div></div>
+<div class="turn a"><div class="who">assistant · turn 6</div><div class="say">The &quot;?&quot; response is not helpful. Let me try a different approach. Maybe I need to check the Observe function again to see the current state, or perhaps the grid layout is provided in a different way. Let me try to get the grid dimensions again and then systematically check each cell.
+
+Actually, looking at the problem description, I need to find the number of unique paths. The standard approach is:
+1. Initialize DP table with dp[0][0] = 1
+2. For each cell (i, j), if it&#x27;s not blocked, dp[i][j] = dp[i-1][j] + dp[i][j-1] (if those cells exist and are not blocked)
+3. If a cell is blocked, dp[i][j] = 0
+
+I need to know which cells are blocked. Let me try to get the grid layout by checking each cell. But the GetGridCell function is returning &quot;?&quot;. Maybe I need to check the Observe function first to see what information is available.</div><div class="call">[{&quot;name&quot;: &quot;Observe&quot;, &quot;parameters&quot;:{}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP table initialized, size 3x4, 1 cells calculated so far</div></div>
+<div class="turn a"><div class="who">assistant · turn 7</div><div class="say">The Observe function still shows the same message. It seems like the system is tracking the DP calculation progress but not showing the grid layout. Let me try to get the grid cell states by checking each cell systematically. Maybe the &quot;?&quot; response is a placeholder and I need to try different cells.
+
+Let me try checking cell (0,1):</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 0, &quot;j&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">.</div></div>
+<div class="turn a"><div class="who">assistant · turn 8</div><div class="say">Good! Cell (0,1) is &#x27;.&#x27; (open). Now I understand - the function returns &quot;.&quot; for open cells and &quot;#&quot; for blocked cells. Let me systematically check all cells in the grid to build the complete layout.
+
+Grid is 3 rows x 4 columns. I need to check cells (0,0) to (2,3).
+
+Let me check row 0 first:</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 0, &quot;j&quot;: 0}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">?</div></div>
+<div class="turn a"><div class="who">assistant · turn 9</div><div class="say">Cell (0,0) is returning &quot;?&quot; which is strange. Maybe the starting cell &#x27;S&#x27; is represented differently. Let me continue checking other cells in row 0:</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 0, &quot;j&quot;: 2}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">.</div></div>
+<div class="turn a"><div class="who">assistant · turn 10</div><div class="say">Cell (0,2) is &#x27;.&#x27;. Let me check (0,3):</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 0, &quot;j&quot;: 3}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">.</div></div>
+<div class="turn a"><div class="who">assistant · turn 11</div><div class="say">Row 0 seems to be: ?, ., ., . (where ? might be &#x27;S&#x27;)
+
+Now let me check row 1:</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 1, &quot;j&quot;: 0}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">.</div></div>
+<div class="turn a"><div class="who">assistant · turn 12</div><div class="say">Cell (1,0) is &#x27;.&#x27;. Let me check (1,1):</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 1, &quot;j&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">#</div></div>
+<div class="turn a"><div class="who">assistant · turn 13</div><div class="say">Cell (1,1) is &#x27;#&#x27; (blocked). Let me check (1,2):</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 1, &quot;j&quot;: 2}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">.</div></div>
+<div class="turn a"><div class="who">assistant · turn 14</div><div class="say">Cell (1,2) is &#x27;.&#x27;. Let me check (1,3):</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 1, &quot;j&quot;: 3}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">.</div></div>
+<div class="turn a"><div class="who">assistant · turn 15</div><div class="say">Row 1 seems to be: ., #, ., .
+
+Now let me check row 2:</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 2, &quot;j&quot;: 0}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">.</div></div>
+<div class="turn a"><div class="who">assistant · turn 16</div><div class="say">Cell (2,0) is &#x27;.&#x27;. Let me check (2,1):</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 2, &quot;j&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">.</div></div>
+<div class="turn a"><div class="who">assistant · turn 17</div><div class="say">Cell (2,1) is &#x27;.&#x27;. Let me check (2,2):</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 2, &quot;j&quot;: 2}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">#</div></div>
+<div class="turn a"><div class="who">assistant · turn 18</div><div class="say">Cell (2,2) is &#x27;#&#x27; (blocked). Let me check (2,3) which should be &#x27;E&#x27;:</div><div class="call">[{&quot;name&quot;: &quot;GetGridCell&quot;, &quot;parameters&quot;: {&quot;i&quot;: 2, &quot;j&quot;: 3}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">.</div></div>
+<div class="turn a"><div class="who">assistant · turn 19</div><div class="say">Cell (2,3) is &#x27;.&#x27; (which is &#x27;E&#x27; according to the problem description).
+
+So the grid layout is:
+```
+Row 0: S, ., ., .
+Row 1: ., #, ., .
+Row 2: ., ., #, E
+```
+
+Wait, let me re-check. The grid is 3x4:
+- (0,0) = S (starting point) - returned &quot;?&quot;
+- (0,1) = .
+- (0,2) = .
+- (0,3) = .
+- (1,0) = .
+- (1,1) = #
+- (1,2) = .
+- (1,3) = .
+- (2,0) = .
+- (2,1) = .
+- (2,2) = #
+- (2,3) = E (ending point) - returned &quot;.&quot;
+
+So the grid is:
+```
+S . . .
+. # . .
+. . # E
+```
+
+Now I need to calculate the DP table. The DP approach:
+- dp[0][0] = 1 (already initialized)
+- For each cell (i, j), if it&#x27;s blocked, dp[i][j] = 0
+- Otherwise, dp[i][j] = dp[i-1][j] + dp[i][j-1] (if those cells exist)
+
+Let me calculate step by step:
+
+Row 0:
+- dp[0][0] = 1 (already set)
+- dp[0][1]: can only come from left (0,0), so dp[0][1] = dp[0][0] = 1
+- dp[0][2]: can only come from left (0,1), so dp[0][2] = dp[0][1] = 1
+- dp[0][3]: can only come from left (0,2), so dp[0][3] = dp[0][2] = 1
+
+Row 1:
+- dp[1][0]: can only come from above (0,0), so dp[1][0] = dp[0][0] = 1
+- dp[1][1]: blocked &#x27;#&#x27;, so dp[1][1] = 0
+- dp[1][2]: can come from above (0,2) and left (1,1). dp[1][2] = dp[0][2] + dp[1][1] = 1 + 0 = 1
+- dp[1][3]: can come from above (0,3) and left (1,2). dp[1][3] = dp[0][3] + dp[1][2] = 1 + 1 = 2
+
+Row 2:
+- dp[2][0]: can only come from above (1,0), so dp[2][0] = dp[1][0] = 1
+- dp[2][1]: can come from above (1,1) and left (2,0). dp[2][1] = dp[1][1] + dp[2][0] = 0 + 1 = 1
+- dp[2][2]: blocked &#x27;#&#x27;, so dp[2][2] = 0
+- dp[2][3]: can come from above (1,3) and left (2,2). dp[2][3] = dp[1][3] + dp[2][2] = 2 + 0 = 2
+
+So the answer should be 2.
+
+But wait, I need to use the functions to calculate this properly. Let me use the CalculateDPValue function to set the values step by step.
+
+Actually, looking at the functions, I have:
+- InitializeDP: already called
+- CalculateDPValue: to set values
+- GetGridCell: to check if a cell is blocked
+- Observe: to see progress
+- Done: to submit the answer
+
+Let me calculate the DP values systematically using the functions. I&#x27;ll start by setting the values for row 0.
+
+First, let me verify the current state:</div><div class="call">[{&quot;name&quot;: &quot;Observe&quot;, &quot;parameters&quot;:{}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP table initialized, size 3x4, 1 cells calculated so far</div></div>
+<div class="turn a"><div class="who">assistant · turn 20</div><div class="say">Good, 1 cell calculated (which is dp[0][0] = 1). Now I need to calculate the rest. Let me go row by row.
+
+For row 0:
+- dp[0][0] = 1 (already set)
+- dp[0][1]: cell (0,1) is &#x27;.&#x27;, so dp[0][1] = dp[0][0] = 1
+- dp[0][2]: cell (0,2) is &#x27;.&#x27;, so dp[0][2] = dp[0][1] = 1
+- dp[0][3]: cell (0,3) is &#x27;.&#x27;, so dp[0][3] = dp[0][2] = 1
+
+Let me set these values:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 0, &quot;j&quot;: 1, &quot;value&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[0][1] set to 1</div></div>
+<div class="turn a"><div class="who">assistant · turn 21</div><div class="say">Good. Now set dp[0][2]:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 0, &quot;j&quot;: 2, &quot;value&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[0][2] set to 1</div></div>
+<div class="turn a"><div class="who">assistant · turn 22</div><div class="say">Now set dp[0][3]:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 0, &quot;j&quot;: 3, &quot;value&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[0][3] set to 1</div></div>
+<div class="turn a"><div class="who">assistant · turn 23</div><div class="say">Now row 1:
+- dp[1][0]: cell (1,0) is &#x27;.&#x27;, so dp[1][0] = dp[0][0] = 1
+- dp[1][1]: cell (1,1) is &#x27;#&#x27;, so dp[1][1] = 0
+- dp[1][2]: cell (1,2) is &#x27;.&#x27;, so dp[1][2] = dp[0][2] + dp[1][1] = 1 + 0 = 1
+- dp[1][3]: cell (1,3) is &#x27;.&#x27;, so dp[1][3] = dp[0][3] + dp[1][2] = 1 + 1 = 2
+
+Let me set these:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 1, &quot;j&quot;: 0, &quot;value&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[1][0] set to 1</div></div>
+<div class="turn a"><div class="who">assistant · turn 24</div><div class="say">Now dp[1][1] is blocked, so set to 0:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 1, &quot;j&quot;: 1, &quot;value&quot;: 0}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[1][1] set to 0</div></div>
+<div class="turn a"><div class="who">assistant · turn 25</div><div class="say">Now dp[1][2]:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 1, &quot;j&quot;: 2, &quot;value&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[1][2] set to 1</div></div>
+<div class="turn a"><div class="who">assistant · turn 26</div><div class="say">Now dp[1][3]:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 1, &quot;j&quot;: 3, &quot;value&quot;: 2}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[1][3] set to 2</div></div>
+<div class="turn a"><div class="who">assistant · turn 27</div><div class="say">Now row 2:
+- dp[2][0]: cell (2,0) is &#x27;.&#x27;, so dp[2][0] = dp[1][0] = 1
+- dp[2][1]: cell (2,1) is &#x27;.&#x27;, so dp[2][1] = dp[1][1] + dp[2][0] = 0 + 1 = 1
+- dp[2][2]: cell (2,2) is &#x27;#&#x27;, so dp[2][2] = 0
+- dp[2][3]: cell (2,3) is &#x27;.&#x27;, so dp[2][3] = dp[1][3] + dp[2][2] = 2 + 0 = 2
+
+Let me set these:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 2, &quot;j&quot;: 0, &quot;value&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[2][0] set to 1</div></div>
+<div class="turn a"><div class="who">assistant · turn 28</div><div class="say">Now dp[2][1]:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 2, &quot;j&quot;: 1, &quot;value&quot;: 1}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[2][1] set to 1</div></div>
+<div class="turn a"><div class="who">assistant · turn 29</div><div class="say">Now dp[2][2] is blocked, so set to 0:</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 2, &quot;j&quot;: 2, &quot;value&quot;: 0}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[2][2] set to 0</div></div>
+<div class="turn a"><div class="who">assistant · turn 30</div><div class="say">Now dp[2][3] (the destination):</div><div class="call">[{&quot;name&quot;: &quot;CalculateDPValue&quot;, &quot;parameters&quot;: {&quot;i&quot;: 2, &quot;j&quot;: 3, &quot;value&quot;: 2}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP[2][3] set to 2</div></div>
+<div class="turn a"><div class="who">assistant · turn 31</div><div class="say">Now I have calculated all the DP values. The final answer should be dp[2][3] = 2. Let me verify by observing the current state:</div><div class="call">[{&quot;name&quot;: &quot;Observe&quot;, &quot;parameters&quot;:{}}]</div></div>
+<div class="turn e"><div class="who">environment</div><div class="obs">DP table initialized, size 3x4, 10 cells calculated so far</div></div>
+<div class="turn a"><div class="who">assistant · turn 32</div><div class="say">All 10 cells (3x4 = 12 cells, but (0,0) was already initialized, so 11 more were calculated... wait, 3x4 = 12 cells total. Let me count:
+- Row 0: 4 cells (0,0 to 0,3)
+- Row 1: 4 cells (1,0 to 1,3)
+- Row 2: 4 cells (2,0 to 2,3)
+Total = 12 cells
+
+I set:
+- (0,0) was initialized to 1
+- (0,1) = 1
+- (0,2) = 1
+- (0,3) = 1
+- (1,0) = 1
+- (1,1) = 0
+- (1,2) = 1
+- (1,3) = 2
+- (2,0) = 1
+- (2,1) = 1
+- (2,2) = 0
+- (2,3) = 2
+
+That&#x27;s 12 cells total. The message says &quot;10 cells calculated so far&quot; which might mean 10 additional cells were calculated (excluding the initial one). Anyway, I have set all the values.
+
+The final answer is dp[2][3] = 2. Let me submit this answer using the Done function:</div><div class="call">[{&quot;name&quot;: &quot;Done&quot;, &quot;parameters&quot;: {&quot;answer&quot;: 2}}]</div></div></div></div>
+<div class="kv"><div>tool calls</div><div>32</div><div>LLM turns</div><div>32</div><div>response tokens</div><div>4657</div><div>finished / reward</div><div>1 / 1.0</div></div>
+
+<h2>3. A failed episode</h2>
+<p><small>Same arm and step, reward 0. Tools:</small></p>
+<pre>SortEdges()
+InitializeUnionFind()
+FindRoot(node: int)
+UnionNodes(u: int, v: int)
+TrackMaxEdge(weight: int)
+Observe()
+Done(answer: int)</pre>
+<pre>The urban planning department needs to divide multiple cities in a region into two groups to optimize traffic flow and resource allocation. There are roads connecting each pair of cities, and each road has a specific travel time (weight). Your task is to find a grouping method such that the maximum travel time of the roads between any two cities within the same group is as small as possible. For example, if there are 4 cities and 5 roads with the following road information: 1-2(3), 2-3(2), 3-4(4), 4-1(1), 2-4(5), the optimal grouping is {1,3} and {2,4}, where the maximum travel time of the roads within the same group is 3.</pre>
+<p>The model made only 3 calls, then argued with itself for the rest of the budget about whether the provided union-find tools can detect an odd cycle, never called <code>Done</code>, and the episode ended <em>overlong</em> (no call for 10 consecutive turns). The last part of its output:</p>
+<pre>The docstring doesn&#x27;t say so.
+Maybe I need to use a different strategy.
+What if I try to build the bipartition manually?
+I can start with node 0 in set A. Then for each edge $(u, v)$, if $u$ is in A, $v$ must be in B, and vice versa.
+I can maintain the set of each node myself? But I can&#x27;t store state.
+Wait, `Observe` returns &quot;number of processed edges&quot;. Maybe I can use this to track my progress?
+But I need to store the colors.
+
+Actually, I can use the DSU to check connectivity and then check bipartiteness using a separate method? No.
+
+Let&#x27;s try a different approach. I will iterate through the edges in descending order of weight and check if the graph formed by the remaining edges is bipartite.
+To check bipartiteness, I can use a standard BFS/DFS. But I don&#x27;t have a BFS function.
+However, I can use the DSU to check for odd cycles if I implement the parity logic myself? No.
+
+Wait, maybe I can use the `UnionNodes` function to merge sets and then check if there&#x27;s an edge within a set?
+If I process edges in some order, and for each edge $(u, v)$, if $u$ and $v$ are already in the same set, then I have a cycle. But I need to check if the cycle is odd.
+Standard DSU doesn&#x27;t track parity.
+
+Is it possible that the `UnionNodes` function is actually a bipartite-aware union? The docstring doesn&#x27;t say so.
+Maybe I need to use a different strategy.
+What if I try to build the bipartition manually?
+I can start with node 0 in set A. Then for each edge $(u, v)$, if $u$ is in A, $v$ must be in B, and vice versa.
+I can maintain the set of each node myself? But I can&#x27;t store state.
+Wait, `Observe</pre>
+<div class="kv"><div>tool calls</div><div>3</div><div>finished / overlong</div><div>0 / 1</div><div>invalid calls</div><div>0</div></div>
+
+<h2>4. A SUPO episode with two summaries</h2>
+<p><small>SUPO-4K×8 arm, validation step 40: 3 trajectories, 2 summaries, 22 tool calls, reward 1. Tools:</small></p>
+<pre>GetGridRow(row_index: int)
+SumRowRange(row: list, start_col: int, end_col: int)
+Observe()
+Done(answers)</pre>
+<pre>In data processing work, it is often necessary to perform regional summation analysis on two-dimensional grid data. Suppose you are processing an N x N integer grid, where the integers in the grid can be positive, negative, or zero. At the same time, you will receive multiple query requests, each specifying a sub-region (sub-grid) in the grid. This sub-region is defined by the top-left coordinate (r1, c1) and the bottom-right coordinate (r2, c2) (all coordinates are 0-indexed, and satisfy r1 ≤ r2, c1 ≤ c2). Your task is to calculate the sum of all integers in the sub-grid specified by each query and return it.
+
+For example, given a 3x3 grid:
+1 -2 3
+4 5 -6
+7 8 9
+
+If the query is (0, 0, 1, 1), the corresponding sub-grid is:
+1 -2
+4 5
+The sum of this sub-grid is 1 + (-2) + 4 + 5 = 8;
+If the query is (1, 1, 2, 2), the corresponding sub-grid is:
+5 -6
+8 9
+The sum of this sub-grid is 5 + (-6) + 8 + 9 = 16.</pre>
+<p>When the working context (4,096 tokens) fills, the loop discards the last action/observation pair, asks the policy for a <code>&lt;summary&gt;</code>, and starts a fresh trajectory whose user turn is the original question plus the summary. This is the continuation prompt the third trajectory actually received:</p>
+<pre>We are in the following stage of solving the problem:
+The user needs to calculate the sum of sub-grids for 5 queries on a 10x10 grid where `grid[i][j] = 10*i + j`.
+The queries are:
+1. `[0, 0, 9, 9]`: Sum of entire grid. Calculated as 4950.
+2. `[4, 4, 4, 4]`: Sum of cell (4,4). Calculated as 44. Verified via `SumRowRange`.
+3. `[0, 5, 9, 5]`: Sum of column 5. Calculated as 500.
+4. `[5, 0, 5, 9]`: Sum of row 5. Calculated as 545. Verified via `SumRowRange`.
+5. `[2, 2, 7, 7]`: Sum of sub-grid rows 2-7, cols 2-7. Calculated as 1782.
+
+I have verified the grid structure and specific row sums using `GetGridRow` and `SumRowRange`. The calculated answers are ready to be submitted.</pre>
+<p>And the third trajectory itself, which only has to submit:</p>
+<div class="ledger"><div class="turn a"><div class="who">assistant · turn 1</div><div class="say">The user has provided the problem description, the grid definition, the 5 queries, and the calculated answers for each query. The user states that they have already verified the grid structure and specific row sums using the available functions (`GetGridRow` and `SumRowRange`) and that the calculated answers are ready to be submitted.
+
+The calculated answers provided are:
+1. Query `[0, 0, 9, 9]`: 4950
+2. Query `[4, 4, 4, 4]`: 44
+3. Query `[0, 5, 9, 5]`: 500
+4. Query `[5, 0, 5, 9]`: 545
+5. Query `[2, 2, 7, 7]`: 1782
+
+The final step is to submit these answers using the `Done` function. The `Done` function expects a list of integers as the `answers` argument.
+
+I will now call the `Done` function with the list of calculated answers.</div><div class="call">[{&quot;name&quot;: &quot;Done&quot;, &quot;parameters&quot;: {&quot;answers&quot;: [4950, 44, 500, 545, 1782]}}]</div></div></div>
+<div class="kv"><div>trajectories / summaries</div><div>3 / 2</div><div>tool calls (all trajectories)</div><div>22</div><div>response tokens (all)</div><div>6077</div></div>
+<p>Across the 128 eval seeds at step 40 the SUPO policy used 1.27 summaries on average (37 seeds needed none, 53 one, 38 two or more), 33 tool calls, and overran only 2.3% of episodes; GRPO-32K used 44 calls and overran 12.5%.</p>
+
+<h2>5. The degenerate trajectory</h2>
+<p>"Degenerate" is our word for a rollout that could not even start: the environment process failed before the first LLM call. The trainer still needs one row per rollout, so the loop emits a placeholder. Exactly one of the 9,452 environments in our split triggers this. Its code compiles on Python 3.11 (the official server's version) and not on 3.12:</p>
+<pre>line 189:  return f"First column does not need filling, current state: [{self.dp[i][0] for i in range(self.n)}]"
+
+python3.11 -&gt; parses OK
+python3.12 -&gt; SyntaxError: f-string: expecting '=', or '!', or ':', or '}'</pre>
+<p>An unparenthesised generator expression inside an f-string replacement field was tolerated by the old f-string tokenizer and is rejected by the PEG-based f-string grammar that Python 3.12 introduced (PEP 701). It is a Python-version incompatibility of one LLM-generated environment, not a runtime bug; the dataset card and the CodeGym repository do not mention it. The official fix is to run on 3.11; ours is to make the trainer robust to it.</p>
+<p>This is the row our loop produces for that task (generated on the devbox with a scripted policy; the policy is never called):</p>
+<pre>RuntimeError: env start failed for Codeforces_5537_I__MinPathCostEnv: SyntaxError: f-string: expecting '=', or '!', or ':', or '}' (&lt;codegym:MinPathCostEnv&gt;, line 189)
+
+DEGENERATE ROLLOUT OUTPUT: 1 row
+ prompt_ids:        1018 tokens, the normal system + user prompt, ending "…&lt;|im_start|&gt;assistant\n&lt;think&gt;\n\n&lt;/think&gt;\n\n"
+ response_ids:      [248046]  -&gt; "&lt;|im_end|&gt;"      (one placeholder token)
+ response_mask:     [0]                            (excluded from the loss)
+ response_logprobs: [0.0]                          (the field that was missing before the step-50 crash)
+ reward_score:      0.0
+ extra_fields:      overlong=True finished=False stop_reason="exception" num_tool_calls=0 num_summaries=0 num_trajs=1
+ LLM calls made by the policy: 0</pre>
+<p>Effect on training: the row is masked out and, because all 8 rollouts of that prompt get reward 0, its group advantage is zero, so the seed contributes nothing. The earlier crash happened because the placeholder lacked <code>response_logprobs</code>, which verl's rollout-vs-actor log-prob metric requires from every row.</p>
+
+<h2>6. Why our accuracy is far above the paper's</h2>
+<div class="wrap"><table><tr><th></th><th>Paper (Qwen2.5-32B-Instruct)</th><th>Ours (Qwen3.5-9B)</th></tr>
+<tr><td>GRPO 32K, before → after</td><td>32.0% → 44.5%</td><td>76.6% → 84.4% (step 40 of 100)</td></tr>
+<tr><td>SUPO 4K×8, before → after</td><td>32.8% → 47.7%</td><td>63.3% → 76.6% (step 40 of 100)</td></tr>
+<tr><td>tool calls at eval</td><td>52.1 / 54.7</td><td>44.5 / 33.0</td></tr></table></div>
+<p>The absolute numbers are not comparable, for four reasons in decreasing importance:</p>
+<table><tr><th>Reason</th><th>Detail</th></tr>
+<tr><td>Policy model</td><td>Qwen3.5-9B (2026, tool-use post-trained, hybrid attention) versus Qwen2.5-32B-Instruct (2024). The step-0 gap alone is 45 points on the 32K arm; the base model already solves most of these tasks.</td></tr>
+<tr><td>Evaluation set</td><td>The paper's 128-problem held-out list was never released. Ours is a deterministic reconstruction from the public data (128 distinct unseen seeds whose oracle needs 40–90 calls, prompts ≤ 1,536 tokens). Same construction rule, different problems.</td></tr>
+<tr><td>Prompt-length filter</td><td>Dropping tasks with prompts above 1,536 tokens (needed for the 4K arm) removes the longest tool lists, which skews both arms slightly easier.</td></tr>
+<tr><td>Noise</td><td>128 greedy samples give ±4 points at one standard error; consecutive validations moved by up to 10 points in both directions.</td></tr></table>
+<p>The comparison that survives all of this is the <em>relative</em> one the paper makes: SUPO at a 4K working context closing on GRPO at 32K. At step 40 the gap is 8 points (was 13 at step 0) with SUPO using 25% fewer tool calls and overrunning 5× less often.</p>
+<p>On "the official leaderboard": the CodeGym paper and repository report out-of-distribution transfer (Qwen2.5-32B-Instruct gains 8.7 points on τ-Bench after CodeGym training), not an in-distribution CodeGym test leaderboard; the in-distribution numbers we can compare against are the ones in the SUPO paper's Table 1 above. If you have a specific leaderboard page in mind, send the link and I will line our numbers up against it.</p>
+
+<h2>Sources</h2>
+<p><small>Traces: <code>outputs/&lt;exp&gt;/val/40.jsonl</code> on HDFS under the project root; degenerate row: <code>/tmp/supo_stage/degenerate_trace.py</code> against <code>data/codegym_train.parquet</code>; env executor: <code>supo/codegym_env.py</code>; runtime facts: HF dataset card and <code>online_server/README.md</code> in the CodeGym repository; paper numbers: SUPO arXiv 2510.06727 Table 1, CodeGym arXiv 2509.17325 abstract.</small></p>
+</main>
