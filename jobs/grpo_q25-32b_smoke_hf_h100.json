@@ -51,7 +51,8 @@
     "TRAIN_BS": "16",
     "N_ROLLOUT": "4",
     "MINI_BS": "8",
-    "HF_PAR": "6"
+    "HF_PAR": "6",
+    "MAX_MODEL_LEN_OVERRIDE": "32768"
    }
   }
  },

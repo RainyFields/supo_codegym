@@ -48,7 +48,8 @@
     "SP_SIZE": "4",
     "ROLLOUT_TP": "4",
     "THINK": "0",
-    "MODEL_PARTS": "q32b_parts"
+    "MODEL_PARTS": "q32b_parts",
+    "MAX_MODEL_LEN_OVERRIDE": "32768"
    }
   }
  },

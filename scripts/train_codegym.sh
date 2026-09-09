@@ -40,7 +40,11 @@ case "$ARM" in
         USE_FUSED=${USE_FUSED:-True}; OPT_OFFLOAD=${OPT_OFFLOAD:-True} ;;
   *) echo "unknown ARM=$ARM" >&2; exit 2 ;;
 esac
+[ -n "$MAX_MODEL_LEN_OVERRIDE" ] && MAX_MODEL_LEN=$MAX_MODEL_LEN_OVERRIDE
 MODEL_TAG=${MODEL_TAG:-qwen35-9b}
+# MAX_MODEL_LEN_OVERRIDE: vLLM refuses max_model_len > the model's max_position_embeddings
+# (Qwen2.5-32B-Instruct: 32768 -> 2048 prompt + 30720 response exactly, no headroom).
+MAX_MODEL_LEN_OVERRIDE=${MAX_MODEL_LEN_OVERRIDE:-}
 EXP_NAME=${EXP_NAME:-${ARM}_codegym_${MODEL_TAG}_${TAG}${RUN_TAG}}
 # THINK=1: Qwen3 thinking mode (enable_thinking=true). Earlier turns' <think> content stays packed in
 # the token stream and is trained (verl continuous-token convention). Per-turn caps grow accordingly.

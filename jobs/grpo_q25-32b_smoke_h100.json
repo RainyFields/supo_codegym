@@ -51,7 +51,8 @@
     "TRAIN_BS": "16",
     "N_ROLLOUT": "4",
     "MINI_BS": "8",
-    "MODEL_PARTS": "q32b_parts"
+    "MODEL_PARTS": "q32b_parts",
+    "MAX_MODEL_LEN_OVERRIDE": "32768"
    }
   }
  },
