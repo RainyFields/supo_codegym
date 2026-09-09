@@ -71,18 +71,18 @@ if [ ! -f "$MODEL_LOCAL/model.safetensors.index.json" ] || [ "$(ls "$MODEL_LOCAL
     echo "[job] model from HDFS chunks $MODEL_PARTS ($(cat $ASSETS/$MODEL_PARTS/MANIFEST))"
     mkdir -p /tmp/models && cat $(ls $ASSETS/$MODEL_PARTS/*.part[0-9]* | sort) | tar xf - -C /tmp/models || { echo "[job] FATAL: chunk restore failed"; exit 45; }
   elif [ -n "${MODEL_HF_ID:-}" ]; then
-    mkdir -p "$MODEL_LOCAL" && HF_HUB_ENABLE_HF_TRANSFER=0 $PY -u - <<PYEOF 2>&1 | grep -v Warning || { echo "[job] FATAL: HF download failed"; exit 45; }
-import time, threading, os
-from huggingface_hub import snapshot_download
-t0=time.time(); stop=False
-def report():
-    while not stop:
-        sz=sum(os.path.getsize(os.path.join(r,f)) for r,_,fs in os.walk("$MODEL_LOCAL") for f in fs)
-        print(f"[job] HF fetch progress: {sz/1e9:.1f} GB after {time.time()-t0:.0f}s", flush=True); time.sleep(60)
-threading.Thread(target=report, daemon=True).start()
-snapshot_download("$MODEL_HF_ID", local_dir="$MODEL_LOCAL", allow_patterns=["*.json","*.safetensors","*.txt","*.jinja","merges.txt","vocab.json"], max_workers=16)
-stop=True; print(f"[job] HF fetch done in {time.time()-t0:.0f}s", flush=True)
-PYEOF
+    # per-file curl with resume + stall cutoff: huggingface_hub's snapshot_download ran at 520 MB/s then hung
+    # for good at 31 GB (probe c6934f8f43e5eb2c); curl --speed-time aborts a stalled transfer and we retry.
+    mkdir -p "$MODEL_LOCAL"; HFB="https://huggingface.co/$MODEL_HF_ID/resolve/main"
+    curl -sL --retry 5 -o "$MODEL_LOCAL/model.safetensors.index.json" "$HFB/model.safetensors.index.json" || { echo "[job] FATAL: HF index fetch failed"; exit 45; }
+    FILES="$($PY -c "import json;print(' '.join(sorted(set(json.load(open('$MODEL_LOCAL/model.safetensors.index.json'))['weight_map'].values()))))") config.json generation_config.json tokenizer_config.json tokenizer.json merges.txt vocab.json"
+    echo "[job] HF fetch of $(echo $FILES | wc -w) files via curl ($(date))"
+    _hf_get() { local f=$1 t; for t in 1 2 3 4 5 6; do curl -sL -C - --retry 3 --speed-time 60 --speed-limit 2000000 --max-time 1800 -o "$MODEL_LOCAL/$f" "$HFB/$f" && return 0; echo "[job] retry $t for $f"; sleep 5; done; return 1; }
+    export -f _hf_get; export MODEL_LOCAL HFB
+    echo $FILES | tr ' ' '\n' | xargs -P ${HF_PAR:-6} -I{} bash -c '_hf_get "$1" || { echo "[job] HF FETCH FAILED $1"; echo FAIL >> /tmp/hf_fail; }' _ {}
+    [ -f /tmp/hf_fail ] && { echo "[job] FATAL: HF download failed"; exit 45; }
+    $PY -c "
+import json,os,sys; idx=json.load(open('$MODEL_LOCAL/model.safetensors.index.json')); miss=[f for f in set(idx['weight_map'].values()) if not os.path.exists('$MODEL_LOCAL/'+f) or os.path.getsize('$MODEL_LOCAL/'+f)<1e6]; print('[job] HF fetch done, missing shards:', miss); sys.exit(1 if miss else 0)" || exit 45
   else
     mkdir -p "$MODEL_LOCAL" && cp "$MODEL_SRC"/* "$MODEL_LOCAL"/ || { echo "[job] FATAL: model staging failed"; exit 45; }
   fi
