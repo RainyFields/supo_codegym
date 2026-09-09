@@ -66,10 +66,22 @@ MODEL_LOCAL=/tmp/models/$(basename "${MODEL_HF_ID:-$MODEL_SRC}")
 NSHARD_MIN=${MODEL_MIN_SHARDS:-4}
 if [ ! -f "$MODEL_LOCAL/model.safetensors.index.json" ] || [ "$(ls "$MODEL_LOCAL"/*.safetensors 2>/dev/null | wc -l)" -lt "$NSHARD_MIN" ]; then
   echo "[job] staging model to $MODEL_LOCAL ($(date))..."
-  if [ -n "${MODEL_HF_ID:-}" ]; then
-    mkdir -p "$MODEL_LOCAL" && $PY - <<PYEOF || { echo "[job] FATAL: HF download failed"; exit 45; }
+  if [ -n "${MODEL_PARTS:-}" ] && [ -f "$ASSETS/$MODEL_PARTS/MANIFEST" ]; then
+    # chunked tar of the model dir on HDFS (job-assets/<MODEL_PARTS>/*.part*, MANIFEST="<n> <md5>"): fast fuse read
+    echo "[job] model from HDFS chunks $MODEL_PARTS ($(cat $ASSETS/$MODEL_PARTS/MANIFEST))"
+    mkdir -p /tmp/models && cat $(ls $ASSETS/$MODEL_PARTS/*.part[0-9]* | sort) | tar xf - -C /tmp/models || { echo "[job] FATAL: chunk restore failed"; exit 45; }
+  elif [ -n "${MODEL_HF_ID:-}" ]; then
+    mkdir -p "$MODEL_LOCAL" && HF_HUB_ENABLE_HF_TRANSFER=0 $PY -u - <<PYEOF 2>&1 | grep -v Warning || { echo "[job] FATAL: HF download failed"; exit 45; }
+import time, threading, os
 from huggingface_hub import snapshot_download
+t0=time.time(); stop=False
+def report():
+    while not stop:
+        sz=sum(os.path.getsize(os.path.join(r,f)) for r,_,fs in os.walk("$MODEL_LOCAL") for f in fs)
+        print(f"[job] HF fetch progress: {sz/1e9:.1f} GB after {time.time()-t0:.0f}s", flush=True); time.sleep(60)
+threading.Thread(target=report, daemon=True).start()
 snapshot_download("$MODEL_HF_ID", local_dir="$MODEL_LOCAL", allow_patterns=["*.json","*.safetensors","*.txt","*.jinja","merges.txt","vocab.json"], max_workers=16)
+stop=True; print(f"[job] HF fetch done in {time.time()-t0:.0f}s", flush=True)
 PYEOF
   else
     mkdir -p "$MODEL_LOCAL" && cp "$MODEL_SRC"/* "$MODEL_LOCAL"/ || { echo "[job] FATAL: model staging failed"; exit 45; }
