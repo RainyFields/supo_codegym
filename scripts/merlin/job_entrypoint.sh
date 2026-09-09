@@ -146,7 +146,11 @@ HOST_STATS_PID=$!
 # ── multi-node ray bootstrap (NNODES>1): rank 0 = head, others join; trainer runs on rank 0 only ──
 NNODES=${NNODES:-1}; NODE_RANK=${ARNOLD_ID:-0}; export NNODES
 if [ "$NNODES" -gt 1 ]; then
-  MY_IP=${MY_HOST_IP:-${BYTED_HOST_IP:-$(hostname -I | cut -d' ' -f1)}}
+  # Prefer an IPv4 address: some A100 pods expose MY_HOST_IP as a bare IPv6 (smoke 8ffc47df8d1b6184) and
+  # `ray start --address=v6:port` rejects it ("Invalid address format"). IPv6 fallback is bracketed for --address.
+  _pick_ip() { local c; for c in "${MY_HOST_IP:-}" "${BYTED_HOST_IP:-}" $(hostname -I 2>/dev/null); do case "$c" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) [ "${c#127.}" = "$c" ] && { echo "$c"; return; };; esac; done
+                for c in "${MY_HOST_IP:-}" "${BYTED_HOST_IP:-}" $(hostname -I 2>/dev/null); do [ -n "$c" ] && { echo "$c"; return; }; done; }
+  MY_IP=$(_pick_ip); MY_IP_ADDR=$MY_IP; case "$MY_IP" in *:*) MY_IP_ADDR="[$MY_IP]";; esac
   HEAD_FILE=$RUNS/ray_head_${ARNOLD_TRIAL_ID:-$$}.txt
   echo "[job] multi-node: NNODES=$NNODES rank=$NODE_RANK ip=$MY_IP hosts=${ARNOLD_WORKER_HOSTS:-?}"
   if [ "$NODE_RANK" = 0 ]; then
@@ -162,7 +166,7 @@ if [ "$NNODES" -gt 1 ]; then
       $XD/envs/supo/bin/ray stop --force >/dev/null 2>&1; sleep 8
     done; done
     [ -n "$RAY_PORT" ] || { echo "[job] FATAL: ray head failed on all ports; last output:"; tail -15 "$RAY_LOG"; exit 47; }
-    echo "$MY_IP:$RAY_PORT" > "$HEAD_FILE"; export RAY_ADDRESS="$MY_IP:$RAY_PORT"
+    echo "$MY_IP_ADDR:$RAY_PORT" > "$HEAD_FILE"; export RAY_ADDRESS="$MY_IP_ADDR:$RAY_PORT"
     for i in $(seq 1 90); do n=$($XD/envs/supo/bin/python -c "import ray; ray.init(address='$RAY_ADDRESS', ignore_reinit_error=True, logging_level='ERROR'); print(len([x for x in ray.nodes() if x['Alive']]))" 2>/dev/null); [ "${n:-0}" -ge "$NNODES" ] && break; sleep 20; done
     echo "[job] ray cluster: ${n:-0}/$NNODES nodes alive ($(date))"; [ "${n:-0}" -ge "$NNODES" ] || { echo "[job] FATAL: ray workers did not join"; exit 47; }
   else
