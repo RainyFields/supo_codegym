@@ -1,0 +1,58 @@
+{
+ "name": "supo-codegym-hffetchprobe-h100",
+ "namespace": "/user/xiaoxuan.lei",
+ "job_type": "train",
+ "description": "1-GPU probe: in-pod HF snapshot_download rate for Qwen2.5-32B-Instruct (8 workers, progress every 60 s, 25 min cap)",
+ "attachments": [
+  {
+   "kind": "hdfs_volume",
+   "hdfs_volume_attachment": {
+    "hdfs_volumes": [
+     {
+      "access_mode": "RW",
+      "extra": "",
+      "mnt": "/mnt/hdfs/mlsys",
+      "path": "hdfs://harunava/home/byte_arnold_va_ssd/mlsys",
+      "roles": [
+       "worker"
+      ]
+     }
+    ]
+   }
+  }
+ ],
+ "job_config": {
+  "job_template_config": {
+   "entrypoint_full_script": "tar xzf /mnt/hdfs/mlsys/users/xiaoxuan/supo_codegym/job-assets/envs-supo.tar.gz -C / && PY=/home/tiger/xiaoxuan/envs/supo/bin/python && mkdir -p /tmp/models/m && timeout 1500 $PY -u - <<'PYEOF'\nimport time, threading, os\nfrom huggingface_hub import snapshot_download\nt0=time.time(); stop=False; last=0\ndef report():\n    global last\n    while not stop:\n        sz=sum(os.path.getsize(os.path.join(r,f)) for r,_,fs in os.walk(\"/tmp/models/m\") for f in fs)\n        print(f\"[fetch] {sz/1e9:.1f} GB after {time.time()-t0:.0f}s ({(sz-last)/60/1e6:.0f} MB/s last minute)\", flush=True); last=sz; time.sleep(60)\nthreading.Thread(target=report, daemon=True).start()\nsnapshot_download(\"Qwen/Qwen2.5-32B-Instruct\", local_dir=\"/tmp/models/m\", allow_patterns=[\"*.json\",\"*.safetensors\",\"*.txt\",\"*.jinja\",\"merges.txt\",\"vocab.json\"], max_workers=8)\nstop=True; sz=sum(os.path.getsize(os.path.join(r,f)) for r,_,fs in os.walk(\"/tmp/models/m\") for f in fs); print(f\"[fetch] DONE {sz/1e9:.1f} GB in {time.time()-t0:.0f}s\", flush=True)\nPYEOF\necho \"[fetch] exit=$?\"; exit 0",
+   "git_repo": {
+    "repo_name": ""
+   },
+   "image_meta": {
+    "image_source": "url",
+    "image_url": "aliyun-va-hub.byted.org/arnold/modelchef-gpu:1.0.0.38"
+   },
+   "env_map": {}
+  }
+ },
+ "resource_config": {
+  "resource_backend": "arnold",
+  "arnold_resource_config": {
+   "cluster_ids": [
+    4
+   ],
+   "cluster_select_mode": "single",
+   "group_id": 765,
+   "roles": [
+    {
+     "name": "worker",
+     "num": 1,
+     "gpu": 1,
+     "gpu_type": "H100_SXM_80GB",
+     "cpu": 12,
+     "memory_mb": 193024,
+     "queue_name": "compute-89-aliyun.va-cloudnative-aigcp-ark.eng.algorithm-guarantee"
+    }
+   ]
+  }
+ }
+}
