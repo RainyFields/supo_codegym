@@ -36,6 +36,7 @@ _upload_dir() {  # $1 = step N
   local n=$1 src="$CKPT_DIR/global_step_$1" dst="$HDFS_CKPT/global_step_$1" uri="$HDFS_CKPT_URI/global_step_$1"
   [ -d "$src" ] || { _log "src vanished: $src"; return 1; }
   local t0=$(date +%s) bytes=$(find "$src" -type f -printf '%s\n' | awk '{s+=$1}END{print s+0}') nsrc=$(find "$src" -type f | wc -l)   # captured BEFORE the copy: verl (keep=1) may rotate $src away right after
+  _log "uploading global_step_$n: $((bytes/1000000)) MB, $nsrc files, mode ${SYNC_MODE:-cli}, node ${NODE_RANK:-0}/${NNODES:-1}"
   # Never copy over an existing/partial dst: fuse cannot rm -rf directory trees and overwriting files
   # through fuse is very slow (run #5). Move a leftover aside (rename works), copy into a fresh dir.
   if [ -e "$dst" ] && [ "${NNODES:-1}" -le 1 ]; then
@@ -143,8 +144,25 @@ ckpt_sync_loop() {  # background; stops when $SYNC_STOP_FILE exists and everythi
   done
 }
 
-ckpt_drain() {  # call after training: signal the loop and wait for it
+ckpt_drain() {  # call after training: signal the loop and wait for it, then make one explicit final attempt
   touch "${SYNC_STOP_FILE:-/tmp/supo_sync_stop}"
   [ -n "${SYNC_PID:-}" ] && { _log "waiting for sync loop pid $SYNC_PID"; wait "$SYNC_PID" 2>/dev/null; }
+  # Smoke 4430907959c555c2 (2 nodes) exited DONE ~1 min after saving global_step_2 with nothing on HDFS and no
+  # upload lines logged: never rely on the loop having seen the last save. Re-derive the newest local step and
+  # upload it here if this node's copy is not marked complete (single-node: not yet the latest synced step).
+  local n last
+  if [ "${NNODES:-1}" -gt 1 ] && [ "${NODE_RANK:-0}" != 0 ]; then n=$(cat "$HDFS_CKPT/tracker_step.txt" 2>/dev/null || echo 0)
+  else n=$(cat "$CKPT_DIR/latest_checkpointed_iteration.txt" 2>/dev/null || echo 0); fi
+  last=$(cat "$HDFS_CKPT/latest_synced.txt" 2>/dev/null || echo 0)
+  if [ "$n" -gt 0 ] 2>/dev/null && [ -d "$CKPT_DIR/global_step_$n" ]; then
+    local need=0
+    if [ "${NNODES:-1}" -gt 1 ]; then [ -f "$HDFS_CKPT/global_step_$n/.COMPLETE.${NODE_RANK:-0}" ] || need=1
+    else [ "$n" -gt "$last" ] 2>/dev/null && need=1; fi
+    if [ $need = 1 ]; then
+      _log "drain: final upload attempt for global_step_$n (latest_synced=$last)"
+      [ "${NNODES:-1}" -gt 1 ] && [ "${NODE_RANK:-0}" = 0 ] && echo "$n" > "$HDFS_CKPT/tracker_step.txt"
+      _upload_dir "$n" || { _log "drain: retrying global_step_$n once"; _upload_dir "$n"; } || _log "drain: global_step_$n NOT mirrored"
+    else _log "drain: global_step_$n already mirrored"; fi
+  else _log "drain: no local checkpoint to mirror (tracker step=$n)"; fi
   _log "drain done: HDFS latest_synced=$(cat "$HDFS_CKPT/latest_synced.txt" 2>/dev/null || echo none)"
 }
