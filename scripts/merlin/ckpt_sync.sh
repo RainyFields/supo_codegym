@@ -35,7 +35,7 @@ _fuse_copy_mine() { local f; (cd "$1" && find . -type f ! -name '.COMPLETE*' | s
 _upload_dir() {  # $1 = step N
   local n=$1 src="$CKPT_DIR/global_step_$1" dst="$HDFS_CKPT/global_step_$1" uri="$HDFS_CKPT_URI/global_step_$1"
   [ -d "$src" ] || { _log "src vanished: $src"; return 1; }
-  local t0=$(date +%s) bytes=$(find "$src" -type f -printf '%s\n' | awk '{s+=$1}END{print s+0}') nsrc=$(find "$src" -type f | wc -l)   # captured BEFORE the copy: verl (keep=1) may rotate $src away right after
+  local t0=$(date +%s) bytes=$(find "$src" -type f -printf '%s\n' | awk '{s+=$1}END{printf "%.0f\n", s}') nsrc=$(find "$src" -type f | wc -l)   # captured BEFORE the copy: verl (keep=1) may rotate $src away right after
   _log "uploading global_step_$n: $((bytes/1000000)) MB, $nsrc files, mode ${SYNC_MODE:-cli}, node ${NODE_RANK:-0}/${NNODES:-1}"
   # Never copy over an existing/partial dst: fuse cannot rm -rf directory trees and overwriting files
   # through fuse is very slow (run #5). Move a leftover aside (rename works), copy into a fresh dir.
@@ -63,7 +63,7 @@ _upload_dir() {  # $1 = step N
   if [ "${NNODES:-1}" -gt 1 ]; then
     ndst=0; bdst=0; for f in $(cd "$src" 2>/dev/null && find . -type f | sed 's|^\./||'); do [ -f "$dst/$f" ] && { ndst=$((ndst+1)); bdst=$((bdst + $(stat -c %s "$dst/$f"))); }; done
   else
-    ndst=$(find "$dst" -type f 2>/dev/null | wc -l); bdst=$(find "$dst" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1}END{print s+0}')
+    ndst=$(find "$dst" -type f 2>/dev/null | wc -l); bdst=$(find "$dst" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1}END{printf "%.0f\n", s}')
   fi
   if [ "$nsrc" = "$ndst" ] && [ "$bytes" = "$bdst" ]; then
     if [ "${NNODES:-1}" -gt 1 ]; then
@@ -115,7 +115,7 @@ ckpt_restore() {
     _fuse_copy_mine "$src" "$dst"
   fi
   rm -f "$dst"/.COMPLETE*
-  local bsrc=$( (cd "$src" && find . -type f ! -name '.COMPLETE*' | sed 's|^\./||') | while read -r f; do _mine "$f" && stat -c %s "$src/$f"; done | awk '{s+=$1}END{print s+0}') bdst=$(find "$dst" -type f -printf '%s\n' | awk '{s+=$1}END{print s+0}')
+  local bsrc=$( (cd "$src" && find . -type f ! -name '.COMPLETE*' | sed 's|^\./||') | while read -r f; do _mine "$f" && stat -c %s "$src/$f"; done | awk '{s+=$1}END{printf "%.0f\n", s}') bdst=$(find "$dst" -type f -printf '%s\n' | awk '{s+=$1}END{printf "%.0f\n", s}')
   [ "$bsrc" = "$bdst" ] || { _log "RESTORE VERIFY FAILED ($bsrc vs $bdst bytes) -> fresh start"; rm -rf "$dst"; return 0; }
   echo "$n" > "$CKPT_DIR/latest_checkpointed_iteration.txt"
   _log "restored global_step_$n in $(( $(date +%s)-t0 )) s -> verl resume_mode=auto will pick it up"
