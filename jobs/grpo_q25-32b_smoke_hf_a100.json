@@ -52,7 +52,8 @@
     "N_ROLLOUT": "4",
     "MINI_BS": "8",
     "HF_PAR": "6",
-    "MAX_MODEL_LEN_OVERRIDE": "32768"
+    "MAX_MODEL_LEN_OVERRIDE": "32768",
+    "NCCL_NET_GDR_LEVEL": "LOC"
    }
   }
  },
