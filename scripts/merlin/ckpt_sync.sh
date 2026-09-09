@@ -121,12 +121,28 @@ ckpt_restore() {
   _log "restored global_step_$n in $(( $(date +%s)-t0 )) s -> verl resume_mode=auto will pick it up"
 }
 
+# Newest local global_step whose shards for this node are all present (3 files per local rank: model/optim/
+# extra_state) and untouched for CKPT_QUIET_SECS. Does not depend on verl's latest_checkpointed_iteration.txt:
+# with NNODES>1 the driver actor (which writes that tracker) may run on any node (smoke daea592c092c4305 had it
+# on rank 1 while rank 0 polled its own /tmp -> nothing was ever mirrored).
+_local_ready_step() {
+  local d n f cnt newest=0 now=$(date +%s) need=$(( 3 * ${N_GPUS:-8} ))
+  for d in "$CKPT_DIR"/global_step_*; do
+    [ -d "$d" ] || continue; n=${d##*global_step_}; [[ "$n" =~ ^[0-9]+$ ]] || continue
+    cnt=0; for f in $(cd "$d" 2>/dev/null && find . -name '*_rank_*.pt' | sed 's|^\./||'); do _mine "$f" && cnt=$((cnt+1)); done
+    [ "$cnt" -ge "$need" ] || continue
+    local last=$(find "$d" -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1); last=${last:-0}
+    [ $(( now - last )) -ge "${CKPT_QUIET_SECS:-45}" ] || continue
+    [ "$n" -gt "$newest" ] && newest=$n
+  done
+  echo "$newest"
+}
+
 ckpt_sync_loop() {  # background; stops when $SYNC_STOP_FILE exists and everything is uploaded
   local last=$(cat "$HDFS_CKPT/latest_synced.txt" 2>/dev/null || echo 0)
   while true; do
-    local n
-    if [ "${NNODES:-1}" -gt 1 ] && [ "${NODE_RANK:-0}" != 0 ]; then n=$(cat "$HDFS_CKPT/tracker_step.txt" 2>/dev/null || echo 0)
-    else n=$(cat "$CKPT_DIR/latest_checkpointed_iteration.txt" 2>/dev/null || echo 0); [ "${NNODES:-1}" -gt 1 ] && [ "$n" -gt 0 ] 2>/dev/null && echo "$n" > "$HDFS_CKPT/tracker_step.txt"; fi
+    local n=$(_local_ready_step)
+    [ "${NNODES:-1}" -gt 1 ] && [ "$n" -gt 0 ] 2>/dev/null && [ "$n" != "$(cat "$HDFS_CKPT/tracker_step.txt" 2>/dev/null)" ] && echo "$n" > "$HDFS_CKPT/tracker_step.txt"
     if [ "$n" -gt "$last" ] 2>/dev/null && [ -d "$CKPT_DIR/global_step_$n" ]; then
       sleep 20   # let verl finish writing data.pt / tq state after the tracker file
       if _upload_dir "$n"; then
@@ -151,8 +167,7 @@ ckpt_drain() {  # call after training: signal the loop and wait for it, then mak
   # upload lines logged: never rely on the loop having seen the last save. Re-derive the newest local step and
   # upload it here if this node's copy is not marked complete (single-node: not yet the latest synced step).
   local n last
-  if [ "${NNODES:-1}" -gt 1 ] && [ "${NODE_RANK:-0}" != 0 ]; then n=$(cat "$HDFS_CKPT/tracker_step.txt" 2>/dev/null || echo 0)
-  else n=$(cat "$CKPT_DIR/latest_checkpointed_iteration.txt" 2>/dev/null || echo 0); fi
+  n=$(CKPT_QUIET_SECS=0 _local_ready_step)   # training is over: no quiet period needed
   last=$(cat "$HDFS_CKPT/latest_synced.txt" 2>/dev/null || echo 0)
   if [ "$n" -gt 0 ] 2>/dev/null && [ -d "$CKPT_DIR/global_step_$n" ]; then
     local need=0
@@ -160,7 +175,7 @@ ckpt_drain() {  # call after training: signal the loop and wait for it, then mak
     else [ "$n" -gt "$last" ] 2>/dev/null && need=1; fi
     if [ $need = 1 ]; then
       _log "drain: final upload attempt for global_step_$n (latest_synced=$last)"
-      [ "${NNODES:-1}" -gt 1 ] && [ "${NODE_RANK:-0}" = 0 ] && echo "$n" > "$HDFS_CKPT/tracker_step.txt"
+      [ "${NNODES:-1}" -gt 1 ] && echo "$n" > "$HDFS_CKPT/tracker_step.txt"
       _upload_dir "$n" || { _log "drain: retrying global_step_$n once"; _upload_dir "$n"; } || _log "drain: global_step_$n NOT mirrored"
     else _log "drain: global_step_$n already mirrored"; fi
   else _log "drain: no local checkpoint to mirror (tracker step=$n)"; fi

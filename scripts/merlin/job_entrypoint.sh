@@ -126,7 +126,12 @@ export HDFS_CKPT=$PROJECT_ROOT/checkpoints/$EXP_NAME
 export HDFS_CKPT_URI=hdfs://harunava/home/byte_arnold_va_ssd/mlsys/users/xiaoxuan/supo_codegym/checkpoints/$EXP_NAME
 export SYNC_STOP_FILE=/tmp/supo_sync_stop; rm -f $SYNC_STOP_FILE
 export NNODES=${NNODES:-1} NODE_RANK=${ARNOLD_ID:-0}
-SYNC_LOG=$RUNS/ckpt_sync.log; [ "$NNODES" -gt 1 ] && SYNC_LOG=$RUNS/ckpt_sync.$NODE_RANK.log   # one writer per fuse file: two nodes appending to one file lost every line after the header
+SYNC_LOG=$RUNS/ckpt_sync.log; [ "$NNODES" -gt 1 ] && SYNC_LOG=$RUNS/ckpt_sync.$NODE_RANK.log
+# The sync loop and the drain both append to the log; HDFS allows one writer per file, so appends from a second
+# process were dropped (no drain lines ever reached HDFS). Write locally and copy the whole file over every minute.
+SYNC_LOG_HDFS=$SYNC_LOG; SYNC_LOG=/tmp/supo_ckpt_sync.$NODE_RANK.log; : > "$SYNC_LOG"
+_sync_log_push() { cp -f "$SYNC_LOG" "$SYNC_LOG_HDFS.tmp" 2>/dev/null && mv -f "$SYNC_LOG_HDFS.tmp" "$SYNC_LOG_HDFS" 2>/dev/null; }
+( while true; do sleep 60; _sync_log_push; done ) & SYNC_LOG_PUSH_PID=$!
 df -h /tmp | tail -1 | awk '{print "[job] /tmp disk: size="$2" used="$3" avail="$4}' | tee -a "$SYNC_LOG"
 # Measured in run #4: the pod's fuse mount copies a 113 GB checkpoint in ~15 min (~125 MB/s) while the
 # hdfs CLI puts stalled ~66 min on IPv4/IPv6 datanode connections before failing -> mirror via fuse.
@@ -186,7 +191,7 @@ if [ "$NNODES" -gt 1 ]; then
     # stay up until rank 0 finishes (DONE/FAILED marker) or the head disappears; keep mirroring our shards
     while [ ! -f "$RUNS/DONE" ] && [ ! -f "$RUNS/FAILED.$ARNOLD_TRIAL_ID" ] && $XD/envs/supo/bin/ray status --address="$HEAD" >/dev/null 2>&1; do sleep 60; done
     echo "[job] rank $NODE_RANK: head finished ($(date)); draining mirror"
-    kill $HOST_STATS_PID 2>/dev/null; ckpt_drain >> "$SYNC_LOG" 2>&1; tail -2 "$SYNC_LOG"
+    kill $HOST_STATS_PID 2>/dev/null; ckpt_drain >> "$SYNC_LOG" 2>&1; tail -2 "$SYNC_LOG"; kill $SYNC_LOG_PUSH_PID 2>/dev/null; _sync_log_push
     $XD/envs/supo/bin/ray stop >/dev/null 2>&1; exit 0
   fi
 fi
@@ -201,7 +206,7 @@ bash "$XD/supo_codegym/scripts/train_codegym.sh" 2>&1 | tee "$LOG"
 rc=${PIPESTATUS[0]}
 kill $HOST_STATS_PID 2>/dev/null
 ckpt_drain >> "$SYNC_LOG" 2>&1   # NOT piped: a pipe forks a subshell that cannot `wait` on SYNC_PID
-tail -3 "$SYNC_LOG"
+tail -3 "$SYNC_LOG"; kill $SYNC_LOG_PUSH_PID 2>/dev/null; _sync_log_push
 if [ $rc -eq 0 ]; then touch "$RUNS/DONE"; else echo "rc=$rc $(date)" >> "$RUNS/FAILED"; touch "$RUNS/FAILED.${ARNOLD_TRIAL_ID:-0}"; fi
 [ "${NNODES:-1}" -gt 1 ] && $XD/envs/supo/bin/ray stop >/dev/null 2>&1
 echo "[job] done rc=$rc $(date)"
