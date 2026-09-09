@@ -21,6 +21,7 @@ echo "[job] node=$(hostname) arm=$ARM run=$RUN_NAME $(date)"
 
 ls /mnt/hdfs/mlsys/users/xiaoxuan >/dev/null 2>&1 || { echo "[job] FATAL: HDFS fuse not available"; exit 41; }
 mkdir -p "$RUNS" "$XD/envs" "$XD/external" /tmp/supo_tmp
+[ "${ARNOLD_ID:-0}" = 0 ] && rm -f "$RUNS/DONE"   # stale marker from a previous run of this arm
 # Multi-node needs an IPv4 node address: on IPv6-only A100 pods (smokes 8ffc47df8d1b6184 / 48bd7be4dd69201b, host
 # fdbd:dc61:1a:459::12) ray joins over "[v6]:port" but the trainer then hangs after vLLM init with 0% GPU util.
 # Fail fast before the 62 GB model fetch so a resubmit can land on a different node.
@@ -189,7 +190,8 @@ if [ "$NNODES" -gt 1 ]; then
     ok=0; for try in 1 2 3; do $XD/envs/supo/bin/ray start --address="$HEAD" --node-ip-address="$MY_IP" --num-gpus="$N_GPUS" --min-worker-port=30000 --max-worker-port=39999 --disable-usage-stats >> "$RUNS/ray_worker_${NODE_RANK}_${ARNOLD_TRIAL_ID:-$$}.log" 2>&1 && { ok=1; break; }; $XD/envs/supo/bin/ray stop --force >/dev/null 2>&1; sleep 10; done
     [ $ok = 1 ] || { echo "[job] FATAL: ray worker failed to join; last output:"; tail -15 "$RUNS/ray_worker_${NODE_RANK}_${ARNOLD_TRIAL_ID:-$$}.log"; exit 47; }
     # stay up until rank 0 finishes (DONE/FAILED marker) or the head disappears; keep mirroring our shards
-    while [ ! -f "$RUNS/DONE" ] && [ ! -f "$RUNS/FAILED.$ARNOLD_TRIAL_ID" ] && $XD/envs/supo/bin/ray status --address="$HEAD" >/dev/null 2>&1; do sleep 60; done
+    # per-trial markers only: a stale DONE from an earlier run in this shared dir made rank 1 leave at start (smokes 48bd7be4dd69201b, 9074f963fbc8f362)
+    while [ ! -f "$RUNS/DONE.$ARNOLD_TRIAL_ID" ] && [ ! -f "$RUNS/FAILED.$ARNOLD_TRIAL_ID" ] && $XD/envs/supo/bin/ray status --address="$HEAD" >/dev/null 2>&1; do sleep 60; done
     echo "[job] rank $NODE_RANK: head finished ($(date)); draining mirror"
     kill $HOST_STATS_PID 2>/dev/null; ckpt_drain >> "$SYNC_LOG" 2>&1; tail -2 "$SYNC_LOG"; kill $SYNC_LOG_PUSH_PID 2>/dev/null; _sync_log_push
     $XD/envs/supo/bin/ray stop >/dev/null 2>&1; exit 0
@@ -207,7 +209,7 @@ rc=${PIPESTATUS[0]}
 kill $HOST_STATS_PID 2>/dev/null
 ckpt_drain >> "$SYNC_LOG" 2>&1   # NOT piped: a pipe forks a subshell that cannot `wait` on SYNC_PID
 tail -3 "$SYNC_LOG"; kill $SYNC_LOG_PUSH_PID 2>/dev/null; _sync_log_push
-if [ $rc -eq 0 ]; then touch "$RUNS/DONE"; else echo "rc=$rc $(date)" >> "$RUNS/FAILED"; touch "$RUNS/FAILED.${ARNOLD_TRIAL_ID:-0}"; fi
+if [ $rc -eq 0 ]; then touch "$RUNS/DONE" "$RUNS/DONE.${ARNOLD_TRIAL_ID:-0}"; else echo "rc=$rc $(date)" >> "$RUNS/FAILED"; touch "$RUNS/FAILED.${ARNOLD_TRIAL_ID:-0}"; fi
 [ "${NNODES:-1}" -gt 1 ] && $XD/envs/supo/bin/ray stop >/dev/null 2>&1
 echo "[job] done rc=$rc $(date)"
 exit $rc
