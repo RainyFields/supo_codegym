@@ -50,7 +50,8 @@
     "THINK": "0",
     "TRAIN_BS": "16",
     "N_ROLLOUT": "4",
-    "MINI_BS": "8"
+    "MINI_BS": "8",
+    "MODEL_PARTS": "q32b_parts"
    }
   }
  },

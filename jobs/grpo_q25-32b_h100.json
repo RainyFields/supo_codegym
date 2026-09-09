@@ -47,7 +47,8 @@
     "MODEL_MIN_SHARDS": "17",
     "SP_SIZE": "4",
     "ROLLOUT_TP": "4",
-    "THINK": "0"
+    "THINK": "0",
+    "MODEL_PARTS": "q32b_parts"
    }
   }
  },
