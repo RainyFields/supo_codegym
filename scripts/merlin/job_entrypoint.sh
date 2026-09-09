@@ -21,6 +21,13 @@ echo "[job] node=$(hostname) arm=$ARM run=$RUN_NAME $(date)"
 
 ls /mnt/hdfs/mlsys/users/xiaoxuan >/dev/null 2>&1 || { echo "[job] FATAL: HDFS fuse not available"; exit 41; }
 mkdir -p "$RUNS" "$XD/envs" "$XD/external" /tmp/supo_tmp
+# Multi-node needs an IPv4 node address: on IPv6-only A100 pods (smokes 8ffc47df8d1b6184 / 48bd7be4dd69201b, host
+# fdbd:dc61:1a:459::12) ray joins over "[v6]:port" but the trainer then hangs after vLLM init with 0% GPU util.
+# Fail fast before the 62 GB model fetch so a resubmit can land on a different node.
+if [ "${NNODES:-1}" -gt 1 ]; then
+  _v4=$(for c in "${MY_HOST_IP:-}" "${BYTED_HOST_IP:-}" $(hostname -I 2>/dev/null); do case "$c" in [0-9]*.[0-9]*.[0-9]*.[0-9]*) [ "${c#127.}" = "$c" ] && { echo "$c"; break; };; esac; done)
+  [ -n "$_v4" ] || { echo "[job] FATAL: no IPv4 address on this pod (MY_HOST_IP=${MY_HOST_IP:-?}; hostname -I: $(hostname -I 2>/dev/null)); IPv6-only multi-node is unsupported -> exit 48"; echo "rc=48 no-ipv4 $(date)" >> "$RUNS/FAILED"; touch "$RUNS/FAILED.${ARNOLD_TRIAL_ID:-0}"; exit 48; }
+fi
 export TMPDIR=/tmp/supo_tmp    # bad pod TMPDIR breaks vLLM zmq ipc binds (FoldAgent lesson)
 ulimit -n 65536 || true
 
