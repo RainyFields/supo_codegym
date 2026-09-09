@@ -147,8 +147,15 @@ if [ "$NNODES" -gt 1 ]; then
   HEAD_FILE=$RUNS/ray_head_${ARNOLD_TRIAL_ID:-$$}.txt
   echo "[job] multi-node: NNODES=$NNODES rank=$NODE_RANK ip=$MY_IP hosts=${ARNOLD_WORKER_HOSTS:-?}"
   if [ "$NODE_RANK" = 0 ]; then
-    RAY_PORT=${ARNOLD_WORKER_0_PORT:-6379}
-    $XD/envs/supo/bin/ray start --head --node-ip-address="$MY_IP" --port="$RAY_PORT" --num-gpus="$N_GPUS" --disable-usage-stats >/dev/null 2>&1 || { echo "[job] FATAL: ray head failed"; exit 47; }
+    RAY_LOG=$RUNS/ray_head_${ARNOLD_TRIAL_ID:-$$}.log; $XD/envs/supo/bin/ray stop --force >/dev/null 2>&1; sleep 2
+    # try the allocated worker-0 port first, then the other allocated MERLIN_INTERNAL ports, then a free ephemeral one
+    CANDS="${ARNOLD_WORKER_0_PORT:-} $(env | grep -o 'ARNOLD_MERLIN_INTERNAL_[0-9]*_CURRENT_PORT=[0-9]*' | cut -d= -f2 | tr '\n' ' ') $(python3 -c 'import socket;s=socket.socket();s.bind(("",0));print(s.getsockname()[1])')"
+    RAY_PORT=""; for pt in $CANDS; do
+      echo "[job] ray head attempt on port $pt ($(date '+%H:%M:%S'))" >> "$RAY_LOG"
+      if $XD/envs/supo/bin/ray start --head --node-ip-address="$MY_IP" --port="$pt" --num-gpus="$N_GPUS" --disable-usage-stats >> "$RAY_LOG" 2>&1; then RAY_PORT=$pt; break; fi
+      $XD/envs/supo/bin/ray stop --force >/dev/null 2>&1; sleep 2
+    done
+    [ -n "$RAY_PORT" ] || { echo "[job] FATAL: ray head failed on all ports; last output:"; tail -15 "$RAY_LOG"; exit 47; }
     echo "$MY_IP:$RAY_PORT" > "$HEAD_FILE"; export RAY_ADDRESS="$MY_IP:$RAY_PORT"
     for i in $(seq 1 90); do n=$($XD/envs/supo/bin/python -c "import ray; ray.init(address='$RAY_ADDRESS', ignore_reinit_error=True, logging_level='ERROR'); print(len([x for x in ray.nodes() if x['Alive']]))" 2>/dev/null); [ "${n:-0}" -ge "$NNODES" ] && break; sleep 20; done
     echo "[job] ray cluster: ${n:-0}/$NNODES nodes alive ($(date))"; [ "${n:-0}" -ge "$NNODES" ] || { echo "[job] FATAL: ray workers did not join"; exit 47; }
@@ -156,7 +163,8 @@ if [ "$NNODES" -gt 1 ]; then
     for i in $(seq 1 90); do [ -s "$HEAD_FILE" ] && break; sleep 20; done
     HEAD=$(cat "$HEAD_FILE" 2>/dev/null); [ -n "$HEAD" ] || { echo "[job] FATAL: no ray head published"; exit 47; }
     echo "[job] joining ray head $HEAD ($(date))"
-    $XD/envs/supo/bin/ray start --address="$HEAD" --node-ip-address="$MY_IP" --num-gpus="$N_GPUS" --disable-usage-stats >/dev/null 2>&1 || { echo "[job] FATAL: ray worker failed to join"; exit 47; }
+    $XD/envs/supo/bin/ray stop --force >/dev/null 2>&1; sleep 2
+    $XD/envs/supo/bin/ray start --address="$HEAD" --node-ip-address="$MY_IP" --num-gpus="$N_GPUS" --disable-usage-stats >> "$RUNS/ray_worker_${NODE_RANK}_${ARNOLD_TRIAL_ID:-$$}.log" 2>&1 || { echo "[job] FATAL: ray worker failed to join; last output:"; tail -15 "$RUNS/ray_worker_${NODE_RANK}_${ARNOLD_TRIAL_ID:-$$}.log"; exit 47; }
     # stay up until rank 0 finishes (DONE/FAILED marker) or the head disappears; keep mirroring our shards
     while [ ! -f "$RUNS/DONE" ] && [ ! -f "$RUNS/FAILED.$ARNOLD_TRIAL_ID" ] && $XD/envs/supo/bin/ray status --address="$HEAD" >/dev/null 2>&1; do sleep 60; done
     echo "[job] rank $NODE_RANK: head finished ($(date)); draining mirror"
