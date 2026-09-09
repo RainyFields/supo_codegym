@@ -111,7 +111,9 @@ rc=$?; [ $rc -ne 0 ] && { echo "[job] exiting 42 for reschedule"; exit 42; }
 
 # ── checkpoints: local save + background HDFS mirror (see scripts/merlin/ckpt_sync.sh) ─────
 case "$ARM" in supo) TAG=4kx8 ;; grpo) TAG=32k ;; *) TAG=$ARM ;; esac   # must match train_codegym.sh
-export EXP_NAME=${EXP_NAME:-${ARM}_codegym_qwen35-9b_${TAG}${RUN_TAG:-}}
+export MODEL_TAG=${MODEL_TAG:-qwen35-9b}
+export EXP_NAME=${EXP_NAME:-${ARM}_codegym_${MODEL_TAG}_${TAG}${RUN_TAG:-}}
+export PROJECT_DIR=$XD/supo_codegym; source "$XD/supo_codegym/scripts/train_env.sh"   # before ray start (multi-node)
 export CKPT_DIR=/tmp/supo_ckpt/$EXP_NAME
 export HDFS_CKPT=$PROJECT_ROOT/checkpoints/$EXP_NAME
 export HDFS_CKPT_URI=hdfs://harunava/home/byte_arnold_va_ssd/mlsys/users/xiaoxuan/supo_codegym/checkpoints/$EXP_NAME

@@ -40,7 +40,7 @@ case "$ARM" in
         USE_FUSED=${USE_FUSED:-True}; OPT_OFFLOAD=${OPT_OFFLOAD:-True} ;;
   *) echo "unknown ARM=$ARM" >&2; exit 2 ;;
 esac
-[ -n "$MAX_MODEL_LEN_OVERRIDE" ] && MAX_MODEL_LEN=$MAX_MODEL_LEN_OVERRIDE
+[ -n "${MAX_MODEL_LEN_OVERRIDE:-}" ] && MAX_MODEL_LEN=${MAX_MODEL_LEN_OVERRIDE}
 MODEL_TAG=${MODEL_TAG:-qwen35-9b}
 # MAX_MODEL_LEN_OVERRIDE: vLLM refuses max_model_len > the model's max_position_embeddings
 # (Qwen2.5-32B-Instruct: 32768 -> 2048 prompt + 30720 response exactly, no headroom).
@@ -60,21 +60,8 @@ SEQ_LEN=$((PROMPT_LEN + RESP_LEN))
 PPO_MAX_TOKENS=${PPO_MAX_TOKENS:-$SEQ_LEN}
 LOGP_MAX_TOKENS=${LOGP_MAX_TOKENS:-$((2 * SEQ_LEN))}
 
-export PYTHONPATH="$OVERLAY:$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
-# vLLM's executor kills the engine when one execute_model RPC exceeds this (default 300 s); a
-# host-side stall (sandbox spawn burst) must not take the rollout engine down. Ray workers inherit it.
-export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=${VLLM_EXEC_TIMEOUT:-3600}
-# FlashInfer JIT-compiles Qwen3.5 GDN prefill + sampling kernels with nvcc at first use (cicc ~5-6 GB
-# each, OOM-killed by the pod memory cgroup in run d1725c2404e369a3); use the prebuilt triton paths.
-export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
+source "$(dirname "$0")/train_env.sh"   # shared with the job entrypoint (ray daemons must see the same env)
 GDN_PREFILL_BACKEND=${GDN_PREFILL_BACKEND:-triton}
-export CODEGYM_SPAWN_CONCURRENCY=${CODEGYM_SPAWN_CONCURRENCY:-16}
-export WANDB_RUN_ID=${WANDB_RUN_ID:-$EXP_NAME}
-export WANDB_RESUME=${WANDB_RESUME:-allow}
-export WANDB_PROJECT=${WANDB_PROJECT:-supo_codegym}
-export TOKENIZERS_PARALLELISM=false
-export VLLM_USE_V1=1
-export CODEGYM_STEP_TIMEOUT=${CODEGYM_STEP_TIMEOUT:-10}
 
 echo "[train] ARM=$ARM EXP=$EXP_NAME W=$WORKING_CONTEXT S=$MAX_SUMMARIES steps=$TOTAL_STEPS ckpt=$CKPT_DIR $(TZ=America/Los_Angeles date)"
 cd "$VERL_DIR"
