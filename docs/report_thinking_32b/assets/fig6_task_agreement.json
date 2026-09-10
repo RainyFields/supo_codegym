@@ -1,0 +1,17 @@
+{
+  "matched_tasks": 128,
+  "step_9B": 100,
+  "step_32B": 100,
+  "contingency": {
+    "both": 95,
+    "only_9B": 16,
+    "only_32B": 12,
+    "neither": 5
+  },
+  "tasks_unsolved_by_9B_at_step0": {
+    "9B_last": 19,
+    "32B_last": 19,
+    "n_hard": 30
+  },
+  "matching_key": "md5 of the validation prompt text after removing chat-template role markers, <think> scaffolds and whitespace"
+}
