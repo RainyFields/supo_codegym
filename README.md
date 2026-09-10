@@ -98,3 +98,9 @@ R535** — torch matmul 203–212 TFLOP/s, cuSOLVER/cuDNN, flash-attn 2.8.3 cu13
 vLLM 0.24 cu130 serving Qwen3.5-9B (≈280–300 tok/s for 8 prompts). Only blemish: SIGSEGV (exit 139) inside
 `dist.destroy_process_group()` AFTER a successful all_reduce, on both images (cu129 does not show it) — a
 teardown crash, not a training one; test in isolation before relying on cu130 for long runs.
+
+## Reports
+
+- `docs/report/` — SUPO Table-1 replication on CodeGym with Qwen3.5-9B (GRPO-32K vs SUPO-4K×8): `REPORT.pdf`, `REPORT.md`, figures + data.
+- `docs/report_thinking_32b/` — thinking-mode arms (Qwen3.5-9B) and the Qwen2.5-32B-Instruct GRPO-32K arm: `REPORT.pdf`, `REPORT.md`, `report.html`, `assets/` (every figure paired with its data; see `assets/README.md`). Rebuild with `python scripts/make_report_thinking_32b.py`.
+- Job ledger: `jobs/JOBS.tsv`.
