@@ -116,9 +116,23 @@ ckpt_restore() {
   _is_complete "$src" || { _log "global_step_$n is not complete (markers: $(ls -a "$src" | grep -c COMPLETE)); fresh start"; return 0; }
   _log "restoring global_step_$n from HDFS ($(du -sh "$src" | cut -f1))..."
   rm -rf "$dst"; mkdir -p "$dst"
+  _restore_verify() {  # bytes of my shards at src vs everything at dst
+    local bs=$( (cd "$src" && find . -type f ! -name '.COMPLETE*' | sed 's|^\./||') | while read -r f; do _mine "$f" && stat -c %s "$src/$f"; done | awk '{s+=$1}END{printf "%.0f\n", s}')
+    local bd=$(find "$dst" -type f ! -name '.COMPLETE*' -printf '%s\n' 2>/dev/null | awk '{s+=$1}END{printf "%.0f\n", s}')
+    [ "$bs" = "$bd" ] && [ "$bs" != 0 ]
+  }
   if [ "$SYNC_MODE" = cli ]; then
+    # No pipe into grep -q here: it exited on the first GETFAIL and SIGPIPE-killed the remaining gets
+    # (rerun 3d645925cb1c719f restored 0 bytes and started fresh). Failures go to a file; any failure or a
+    # byte mismatch falls back to a clean fuse copy.
+    local gf=/tmp/supo_getfail.$$; rm -f "$gf"
     ( cd "$src" && find . -type d | sed 's|^\./||' | grep -v '^\.$' | xargs -r -I{} mkdir -p "$dst/{}"
-      find . -type f ! -name '.COMPLETE*' | sed 's|^\./||' | while read -r f; do _mine "$f" && echo "$f"; done | xargs -r -P $PUT_PAR -I{} sh -c "$H dfs -get -f \"$uri/{}\" \"$dst/{}\" >/dev/null 2>&1 || echo GETFAIL {}" ) | grep -q GETFAIL && { _log "cli restore failed, fuse cp"; _fuse_copy_mine "$src" "$dst"; }
+      find . -type f ! -name '.COMPLETE*' | sed 's|^\./||' | while read -r f; do _mine "$f" && echo "$f"; done | xargs -r -P $PUT_PAR -I{} sh -c "$H dfs -get -f \"$uri/{}\" \"$dst/{}\" >/dev/null 2>&1 || echo GETFAIL {} >> $gf" )
+    if [ -s "$gf" ] || ! _restore_verify; then
+      _log "cli restore incomplete ($(wc -l < "$gf" 2>/dev/null || echo 0) failed gets), falling back to fuse cp"
+      rm -rf "$dst"; mkdir -p "$dst"; _fuse_copy_mine "$src" "$dst"
+    fi
+    rm -f "$gf"
   else
     _fuse_copy_mine "$src" "$dst"
   fi
