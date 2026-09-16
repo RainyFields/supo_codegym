@@ -46,7 +46,8 @@
     "HAS_TT_DATA": "False",
     "ML_FRAMEWORK": "pytorch",
     "STORAGE_TYPE": "HDFS",
-    "THINK": "0"
+    "THINK": "0",
+    "RESTORE_FROM_EXP": "supo_codegym_qwen35-9b_4kx8"
    }
   }
  },
