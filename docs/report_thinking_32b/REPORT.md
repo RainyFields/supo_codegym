@@ -20,7 +20,7 @@ Everything not listed here is identical to §2 of the base report: 12,800 traini
 **Infrastructure.** One Merlin/Arnold batch job per arm; pods restore a pinned venv (torch 2.11+cu129, vLLM 0.24, flash-attn 2.8.3) and a repo snapshot from HDFS, stage the model locally, start ray (rank 0 head, rank 1 joins over the published IPv4 address), train with `scripts/train_codegym.sh` and mirror checkpoints with `scripts/merlin/ckpt_sync.sh`. Metrics: Merlin tracking project `supo_codegym` (run name = experiment name), https://ml.tiktok-row.net/experiment/tracking/detail?Id=project_20260907_b5e8830b.
 
 **Deviations (honest list).**
-- Our evaluation set (128 tasks, 40–90-call oracle band, no accuracy filter, greedy, 100 calls) is not the CodeGym paper's (§5). Standard error at p≈0.8 is ±0.035; differences below ~0.05 are within noise.
+- Our evaluation set (128 tasks, 40–90-call oracle band, no accuracy filter, greedy, 100 calls) is not the CodeGym paper's (§6). Standard error at p≈0.8 is ±0.035; differences below ~0.05 are within noise.
 - Thinking arms raise the per-turn cap from 1,024 to 4,096 tokens (SUPO's per-trajectory response from 5,120 to 8,192); working contexts are unchanged, so thinking competes with tool calls for the same budget.
 - Qwen2.5-32B-Instruct has no thinking switch; its arm is non-thinking by construction.
 - The 32B arm trains on 16 GPUs with TP4/SP4 and fused kernels (bf16 hidden states cast to the fp32 lm-head dtype inside the fused cross-entropy kernel); batch and optimizer are identical to the 9B arm.
@@ -66,13 +66,41 @@ Everything not listed here is identical to §2 of the base report: 12,800 traini
 
 The mechanism behind the GRPO+think dip: thinking grows from step 10, generation reaches ~11K tokens per episode, more episodes overrun the 32K window and are masked out of the loss, and accuracy falls to 0.68–0.75. Between steps 60 and 100 mean think length shrinks (361 → 191 tokens per thinking turn), truncation falls from 26% to 6%, and accuracy recovers to 0.859. SUPO absorbs the extra tokens through summarization, so its truncation stays low, but its thinking policy makes fewer calls (24.6 vs. 32.4) and scores lower.
 
-## 4. Training curves
+## 4. Thinking cut-offs by the per-turn cap
+
+With `enable_thinking` the Qwen3.5 generation prompt ends in `<think>\n`, so every assistant turn starts inside a think block; a turn whose thinking never closed is one with no `</think>`. Per episode, `cut_off_turns = num_steps - output.count("</think>")` (clipped at 0), computed by the builder from the greedy validation dumps of the GRPO-32K+think arm. The table and Figure 7 report, per checkpoint, cut-off turns over all turns, the fraction of episodes with at least one cut-off, overlong rate and accuracy conditioned on whether the episode has a cut-off, and mean response tokens per turn (`rollout_response_tokens / num_steps`).
+
+| step | cut-off turns / all turns | episodes with a cut-off | overlong \| cut-off | overlong \| none | acc \| cut-off | acc \| none | resp tokens / turn |
+|---|---|---|---|---|---|---|---|
+| 0 | 24/5736 (0.4%) | 6/128 (5%) | 0.50 | 0.03 | 0.33 | 0.76 | 178 |
+| 10 | 90/5888 (1.5%) | 23/128 (18%) | 0.52 | 0.03 | 0.39 | 0.88 | 300 |
+| 20 | 188/6139 (3.1%) | 39/128 (30%) | 0.67 | 0.06 | 0.18 | 0.90 | 484 |
+| 30 | 187/6251 (3.0%) | 45/128 (35%) | 0.62 | 0.06 | 0.36 | 0.90 | 504 |
+| 40 | 193/5765 (3.3%) | 41/128 (32%) | 0.61 | 0.05 | 0.39 | 0.92 | 589 |
+| 50 | 154/5756 (2.7%) | 41/128 (32%) | 0.51 | 0.01 | 0.46 | 0.93 | 509 |
+| 60 | 236/4969 (4.7%) | 50/128 (39%) | 0.66 | 0.00 | 0.32 | 0.94 | 807 |
+| 70 | 179/5420 (3.3%) | 44/128 (34%) | 0.52 | 0.00 | 0.34 | 0.96 | 586 |
+| 80 | 129/5721 (2.3%) | 37/128 (29%) | 0.49 | 0.05 | 0.43 | 0.88 | 431 |
+| 90 | 119/5931 (2.0%) | 34/128 (27%) | 0.50 | 0.02 | 0.44 | 0.94 | 461 |
+| 100 | 62/5652 (1.1%) | 33/128 (26%) | 0.24 | 0.00 | 0.64 | 0.94 | 308 |
+
+![Thinking cut-offs](assets/fig7_think_cutoffs.png)
+
+*Figure 7. Thinking cut-offs by the per-turn cap for 9B GRPO-32K+think per checkpoint (greedy validation, n=128). Method: with `enable_thinking` the generation prompt ends in `<think>\n`, so every assistant turn starts inside a think block, and a turn whose thinking never closed has no `</think>`; per episode `cut_off_turns = num_steps - output.count("</think>")` (clipped at 0). Left: cut-off turns over all turns (solid) and episodes with at least one cut-off (dashed), in percent. Right: overlong rate (red) and accuracy (blue) conditioned on the episode having a cut-off (solid) or none (dashed). Data: `assets/fig7_think_cutoffs.csv`.*
+
+Only a few percent of turns overrun the 4,096-token cap (0.4% at step 0, 3.1% at 20, 4.7% at 60, 1.1% at 100), but they concentrate in a third of the episodes (5% → 30% → 39% → 26%) and wreck them: each cut-off turn burns ~4K of the 30,720-token response budget and yields no action, so episodes with a cut-off are overlong 50–67% of the time against 0–6% for the others, and score 0.18–0.46 against 0.88–0.96. The cut-off rate tracks the thinking-length growth of Figure 3 and the validation dip between steps 20 and 60, and its fall to 1.1% by step 100 (overlong | cut-off down to 0.24) matches the recovery to 0.859.
+
+**Ruled out.** The Qwen chat template drops earlier turns' `<think>` blocks when a conversation is re-rendered (the "prefix-unstable" behaviour), which could in principle remove thinking from the context or the training targets. That does not apply here: verl's continuous-token builder appends only rendered deltas and every generation call is fed the raw accumulated token stream (`supo/agent_loop.py` `_generate` passes `prompt_ids=traj.token_ids`; `verl/utils/tokenizer/continuous_token.py` `_merge_context_token_ids`), so earlier thinking stays in the rollout context and in the training targets.
+
+**Caveats.** The metric is not applicable to the non-thinking control (its empty `<think></think>` pair sits in the prompt, so the count trivially flags one turn per episode) nor to multi-segment SUPO episodes (the `output` field keeps only the final working-context segment). Single-segment SUPO+think episodes (n=21–48 per checkpoint, `summary.json`) show zero cut-offs: the 4K working context triggers a summary before a turn can reach the cap.
+
+## 5. Training curves
 
 ![Training curves](assets/fig4_training_curves.png)
 
 *Figure 4. Batch-level metrics from each arm's trainer stdout (`step:N - key:value` lines, ray/ANSI prefixes stripped, last occurrence per step). Top left: batch mean reward (`critic/score/mean`, 128 × 8 rollouts at temperature 1). Top right: policy-gradient loss. Bottom left: policy entropy. Bottom right: mean generated tokens per rollout. The 9B non-thinking curves start at step 36/40 (resumed pods). The 32B policy has much lower entropy from the start (0.13 → 0.05) than the 9B policies (0.26–0.43) and its response length grows steadily (2.3K → 5.1K) as it learns to make more calls (38.6 → 58.5 on validation). GRPO+think produces the longest rollouts (up to 10.6K tokens at step 58). Data: `assets/fig4_training_curves.csv`.*
 
-## 5. 32B vs. 9B on the same tasks, and the CodeGym paper
+## 6. 32B vs. 9B on the same tasks, and the CodeGym paper
 
 ![Gain over base](assets/fig5_gain_over_base.png)
 
@@ -92,7 +120,7 @@ The mechanism behind the GRPO+think dip: thinking grows from step 10, generation
 
 The paper's ≤ 25% accuracy screen fixes the base score near the screening threshold by construction, and its 50-point gain is measured on tasks selected because the base model fails them. Our set never removes tasks the base model solves, so a strong model starts high; the 32B base at 0.52 (0.39–0.50 in earlier two-step smoke runs) is the same model on a less adversarial pool with greedy decoding. A direct number against the paper needs an evaluation split with both of its filters and a re-score of the saved checkpoints (32B steps 80/100, 9B steps 95/100 are on HDFS): a data-preparation change, not a retrain.
 
-## 6. Example trajectories
+## 7. Example trajectories
 
 Excerpts (tool outputs truncated, long runs elided) from `assets/traj_*.txt`; records in `trajectories.json`.
 
@@ -184,7 +212,7 @@ source: greedy validation output, grpo_codegym_qwen35-9b_32k_think @ step 100, f
   obs: 0
 ```
 
-## 7. Incident log and timeline (PDT)
+## 8. Incident log and timeline (PDT)
 
 - **Sep 8 16:03** thinking arms launched (1×8 H100 each); both ran uninterrupted to step 100 (SUPO+think done Sep 9 10:09, GRPO+think Sep 9 20:31); final checkpoints mirrored.
 - **Sep 8 19:00 – Sep 9 13:00** sixteen 2-node smoke runs for the 32B arm, each exposing one defect: huggingface_hub snapshot download hanging at ~31 GB (per-file curl); `max_model_len` above the model's 32,768 positions; ray head failing silently on the allocated port (port fallbacks, worker ports 30000–39999); wandb "No API key" because ray daemons started before the env exports; a verl bug passing the fp32 lm-head weight with bf16 hidden states to the fused cross-entropy kernel (`dense_common`, cast added); on A100 pods an InfiniBand GPU-Direct registration error (`NCCL_NET_GDR_LEVEL=LOC`) and a whole rack of IPv6-only pods (fail-fast preflight); a stale `DONE` marker in the shared run directory making rank 1 leave the ray cluster at start (per-trial markers); verl's driver actor landing on rank 1 so rank 0 never saw the checkpoint tracker (readiness now from each node's own shards); HDFS-fuse dropping appends from a second writer (pod-local sync log with single-writer copy); mawk printing the 196 GB byte sum in scientific notation, aborting the upload in bash arithmetic (printf %.0f).
@@ -195,10 +223,11 @@ source: greedy validation output, grpo_codegym_qwen35-9b_32k_think @ step 100, f
 
 **Open items.** HDFS CLI puts fail immediately on the 32B pods (empty error; fuse fallback carried every upload). The IPv6-only preflight may be over-strict now that the stale-marker bug behind the "IPv6 hang" is fixed. A paper-protocol evaluation split would enable a direct comparison with the CodeGym paper; re-scoring the saved checkpoints on it is straightforward.
 
-## 8. Discussion and limitations
+## 9. Discussion and limitations
 
+- **Training thinking at 32K needs a stop condition that closes thinking:** a think budget separate from the answer budget, or a larger per-turn cap with the overlong mask kept (§4).
 - **Thinking is not free context.** With a fixed 32K window, a policy that thinks 3–14K tokens per episode leaves less room for calls and observations; GRPO's reward then pushes it to think less, and only then does accuracy recover. SUPO's summaries hide the cost from the context but not from the policy: the thinking SUPO arm makes fewer calls and scores lower. On CodeGym, where the useful reasoning is a short plan followed by many cheap calls, thinking buys nothing at this scale.
 - **Model comparison.** Qwen2.5-32B-Instruct is a weaker tool user than Qwen3.5-9B at step 0 (0.52 vs. 0.77) and stays 3 points behind after 100 steps, but it is still improving and solves 12 tasks the 9B policy does not. Whether it overtakes with more steps is untested.
 - **Noise.** Single greedy runs on 128 tasks (±0.035 at p=0.8); peaks and single-checkpoint differences below 0.05 are not real; the 80–100 means and full curves are the reliable summaries.
 - **Attribution.** Thinking statistics come from the decoded validation text and a tag-based split; they cannot separate useful from idle thinking. The thinking-length/overlong/accuracy link is a co-movement over checkpoints, not a controlled ablation.
-- **Comparability with the papers** is limited to direction and gain size (§5).
+- **Comparability with the papers** is limited to direction and gain size (§6).

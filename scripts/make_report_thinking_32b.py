@@ -59,10 +59,12 @@ def load_val(exp):
         per_step[step] = row
         per_task[step] = {task_key(r["input"]): float(r.get("score", 0)) for r in recs}
         VAL_OUTPUTS[(exp, step)] = [(r.get("output", ""), float(r.get("score", 0))) for r in recs]
+        VAL_RECS[(exp, step)] = [{k: r.get(k) for k in ("output", "score", "overlong", "num_steps", "rollout_response_tokens", "num_trajs")} for r in recs]
     return [per_step[s] for s in sorted(per_step)], per_task
 
 
 VAL_OUTPUTS = {}   # (exp, step) -> [(decoded generation incl. chat-template role text, score)]
+VAL_RECS = {}      # (exp, step) -> per-record fields for the cut-off analysis
 TURN_SPLIT = re.compile(r"\nassistant\n")
 
 
@@ -319,6 +321,46 @@ def fig_gain(data, out):
         w = csv.DictWriter(fh, fieldnames=["arm", "step", "acc", "base", "gain"]); w.writeheader(); w.writerows(rows)
 
 
+def cutoff_stats(exp, step, single_segment_only=False):
+    """Thinking cut-offs by the per-turn cap. With enable_thinking the Qwen3.5 generation prompt ends in
+    '<think>\n', so every assistant turn starts inside a think block; a turn whose thinking never closed is
+    one with no '</think>'. Per episode: cut_off_turns = num_steps - output.count('</think>') (clipped at 0)."""
+    recs = VAL_RECS.get((exp, step), [])
+    if single_segment_only:
+        recs = [r for r in recs if int(r.get("num_trajs") or 1) == 1]
+    if not recs:
+        return None
+    cut = [max(0, int(r["num_steps"]) - str(r["output"]).count("</think>")) for r in recs]
+    has = [c >= 1 for c in cut]
+    turns = sum(int(r["num_steps"]) for r in recs)
+    m = lambda xs: (sum(xs) / len(xs)) if xs else None
+    ov = [float(r["overlong"]) for r in recs]; ac = [float(r["score"]) for r in recs]
+    return {"n_episodes": len(recs), "turns": turns, "cut_off_turns": sum(cut), "frac_turns_cut": sum(cut) / turns if turns else None,
+            "frac_episodes_with_cut": m([1.0 if h else 0.0 for h in has]), "n_episodes_with_cut": sum(has),
+            "overlong_given_cut": m([o for o, h in zip(ov, has) if h]), "overlong_given_none": m([o for o, h in zip(ov, has) if not h]),
+            "acc_given_cut": m([a for a, h in zip(ac, has) if h]), "acc_given_none": m([a for a, h in zip(ac, has) if not h]),
+            "resp_tokens_per_turn": m([float(r["rollout_response_tokens"]) / max(1, int(r["num_steps"])) for r in recs])}
+
+
+def fig_cutoff(stats, out):
+    apply_publication_style(font_size=13, axes_linewidth=1.8)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6))
+    steps = sorted(stats); c = ARMS["9B GRPO-32K+think"][3]
+    axes[0].plot(steps, [100 * stats[s]["frac_turns_cut"] for s in steps], "-", color=c, lw=2.2, marker="o", ms=4, label="cut-off turns / all turns (%)")
+    axes[0].plot(steps, [100 * stats[s]["frac_episodes_with_cut"] for s in steps], "--", color=PALETTE["red_strong"], lw=2.2, marker="s", ms=4, label="episodes with >=1 cut-off (%)")
+    axes[0].set_ylabel("percent"); axes[0].set_ylim(0, None); axes[0].legend(frameon=False, fontsize=9)
+    for key, lab, col, ls in [("overlong_given_cut", "overlong | cut-off", PALETTE["red_strong"], "-"), ("overlong_given_none", "overlong | none", PALETTE["red_strong"], "--"),
+                              ("acc_given_cut", "accuracy | cut-off", c, "-"), ("acc_given_none", "accuracy | none", c, "--")]:
+        axes[1].plot(steps, [stats[s][key] if stats[s][key] is not None else float("nan") for s in steps], ls, color=col, lw=2.2, marker="o", ms=4, label=lab)
+    axes[1].set_ylabel("fraction of episodes"); axes[1].set_ylim(-0.02, 1.02)
+    axes[1].legend(frameon=False, fontsize=9, ncol=2, loc="upper center", bbox_to_anchor=(0.5, -0.22))
+    for ax in axes: ax.set_xlabel("training step"); ax.grid(alpha=0.3)
+    finalize_figure(fig, f"{out}/fig7_think_cutoffs")
+    rows = [{"arm": "9B GRPO-32K+think", "step": s, **stats[s]} for s in steps]
+    with open(f"{out}/fig7_think_cutoffs.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(rows)
+
+
 def fig_agreement(data, out):
     """Per-task solved/unsolved contingency between 32B@last and 9B@last (and 9B@0), matched by task_key."""
     a9 = data["9B GRPO-32K"][1]; a32 = data["32B GRPO-32K"][1]
@@ -420,15 +462,27 @@ def main():
         traj_txt["9B_think_val_step_last"] = "\n".join(lines); meta["9B_think_val_step_last"] = {"exp": exp_t, "step": st_t, "score": 1.0}
     json.dump({k: {"record": meta[k], "pretty": traj_txt[k]} for k in traj_txt}, open(f"{out}/trajectories.json", "w"), indent=1)
 
+    # thinking cut-offs by the per-turn cap (GRPO+think; SUPO+think single-segment episodes as a check)
+    exp_g = ARMS["9B GRPO-32K+think"][0]; exp_s = ARMS["9B SUPO-4Kx8+think"][0]
+    cutoff = {st: cutoff_stats(exp_g, st) for (e, st) in sorted(VAL_RECS) if e == exp_g}
+    cutoff = {st: v for st, v in cutoff.items() if v}
+    cutoff_supo1 = {st: cutoff_stats(exp_s, st, single_segment_only=True) for (e, st) in sorted(VAL_RECS) if e == exp_s}
+    cutoff_supo1 = {st: v for st, v in cutoff_supo1.items() if v}
     # figures
     fig_val_acc(data, assets); fig_overlong_calls(data, assets); fig_think(think, assets); fig_train(logs, assets); fig_gain(data, assets)
-    agree = fig_agreement(data, assets)
+    agree = fig_agreement(data, assets); fig_cutoff(cutoff, assets)
+    md3 = ["| step | cut-off turns / all turns | episodes with a cut-off | overlong \\| cut-off | overlong \\| none | acc \\| cut-off | acc \\| none | resp tokens / turn |", "|---|---|---|---|---|---|---|---|"]
+    f2 = lambda v: "–" if v is None else f"{v:.2f}"
+    for st, v in cutoff.items():
+        md3.append(f"| {st} | {v['cut_off_turns']}/{v['turns']} ({100 * v['frac_turns_cut']:.1f}%) | {v['n_episodes_with_cut']}/{v['n_episodes']} ({100 * v['frac_episodes_with_cut']:.0f}%) | {f2(v['overlong_given_cut'])} | {f2(v['overlong_given_none'])} | {f2(v['acc_given_cut'])} | {f2(v['acc_given_none'])} | {v['resp_tokens_per_turn']:.0f} |")
 
     json.dump({"arms": summ, "thinking": think, "thinking_control_nonthinking_9B_GRPO": think_ctrl, "agreement": agree,
+               "think_cutoffs_grpo_think": cutoff, "think_cutoffs_supo_think_single_segment": cutoff_supo1,
                "paper_2509_17325": {"model": "Qwen2.5-32B-Instruct", "in_domain_base": 30.1, "in_domain_full": 75.0, "in_domain_filter": 81.0,
                                     "eval": "972 evals / 500 unseen envs, 10-256 calls, base acc <= 25%, T=0.7 top-p 0.95, Tmax 256, prompt 5120 + response 24576"}},
               open(f"{out}/summary.json", "w"), indent=2)
-    open(f"{out}/tables.md", "w").write("## Validation accuracy (greedy, 128 held-out tasks)\n" + "\n".join(md) + "\n\n## Behaviour at first/last checkpoint\n" + "\n".join(md2) + "\n")
+    open(f"{out}/tables.md", "w").write("## Validation accuracy (greedy, 128 held-out tasks)\n" + "\n".join(md) + "\n\n## Behaviour at first/last checkpoint\n" + "\n".join(md2) +
+                                        "\n\n## Thinking cut-offs by the per-turn cap (9B GRPO-32K+think, greedy validation)\n" + "\n".join(md3) + "\n")
     readme = f"""# Assets for the thinking + 32B report
 
 All files were produced by `scripts/make_report_thinking_32b.py` on {os.popen('date "+%Y-%m-%d %H:%M %Z"').read().strip()} from
@@ -444,6 +498,7 @@ records are skipped). Arms -> exp names: {json.dumps({k: v[0] for k, v in ARMS.i
 | fig3_thinking_stats.{{png,pdf,csv}} | Fig. 3 | arm, step, n_tasks (128), assistant_turns (all turns over the 128 greedy validation episodes), frac_turns_with_think, frac_think_unterminated (thinking turn cut before </think>), think_tokens_mean/median/p90/max (Qwen3.5-9B tokenizer count of the text before </think>, opening tag removed), think_tokens_total_per_task | outputs/<exp>/val/<step>.jsonl field `output` (decoded generation incl. chat-template role text), turns split on "\\nassistant\\n" |
 | fig4_training_curves.{{png,pdf,csv}} | Fig. 4 | arm, step, and the batch-level trainer metrics {LOG_KEYS} (verl metric names; response_length in tokens; timing in seconds) | job-runs/<arm>/train_*.log: 'step:N - key:value' lines, ray/ANSI prefixes stripped, last occurrence per step wins |
 | fig5_gain_over_base.{{png,pdf,csv}} | Fig. 5 | arm, step, acc, base (= acc at step 0), gain = acc - base | val dumps |
+| fig7_think_cutoffs.{{png,pdf,csv}} | Fig. 7, Table 5 | arm, step, n_episodes, turns (sum of num_steps), cut_off_turns (sum over episodes of max(0, num_steps - output.count("</think>"))), frac_turns_cut, frac_episodes_with_cut, n_episodes_with_cut, overlong_given_cut / overlong_given_none (mean overlong flag over episodes with >= 1 / 0 cut-off turns), acc_given_cut / acc_given_none (same for score), resp_tokens_per_turn (mean of rollout_response_tokens / num_steps) | val dumps of grpo_codegym_qwen35-9b_32k_think, fields output, num_steps, overlong, score, rollout_response_tokens; single-segment SUPO+think check in ../summary.json |
 | fig6_task_agreement.{{png,pdf,json}} | Fig. 6 | 2x2 contingency of solved/unsolved per task for 32B@last vs 9B@last; matched_tasks; tasks unsolved by 9B at step 0 and how many of those each final policy solves | val dumps, tasks matched by md5 of the prompt text after stripping role markers/<think>/whitespace |
 | val_metrics.csv | Tables 2-3 | arm, step, n, se + the nine per-task mean fields above | val dumps |
 | ../summary.json | all tables | per-arm first/last/peak/mean-80-100 accuracy, overlong, tool calls, gain, train-log path and median step time; thinking stats; agreement; paper reference numbers | derived from the above |

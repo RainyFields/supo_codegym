@@ -110,6 +110,40 @@ arm & overlong @0 & overlong @100 & tool calls @0 & tool calls @100 & summaries 
 
 The mechanism behind the GRPO+think dip is visible across Figures~\ref{fig:beh}--\ref{fig:think}: the policy's thinking grows from step 10 on, the per-episode generation grows to $\sim$11K tokens, more episodes overrun the 32K window and are masked out of the loss, and validation accuracy falls to 0.68--0.75. Between steps 60 and 100 the mean think length shrinks again (361 $\to$ 191 tokens per thinking turn), truncation falls from 26\% to 6\%, and accuracy recovers to 0.859. SUPO absorbs the extra thinking tokens through summarization, so its truncation stays low, but its thinking policy ends with fewer tool calls (24.6 vs.\ 32.4) and a lower final score.
 
+
+\subsection{Thinking cut-offs by the per-turn cap}\label{sec:cutoff}
+With \p{enable\_thinking} the Qwen3.5 generation prompt ends in \p{<think>\textbackslash n}, so every assistant turn starts inside a think block; a turn whose thinking never closed is one with no \p{</think>}. Per episode, \p{cut\_off\_turns = num\_steps - output.count("</think>")} (clipped at 0), computed by the builder from the greedy validation dumps of the GRPO-32K+think arm. Table~\ref{tab:cutoff} and Figure~\ref{fig:cutoff} report, per checkpoint, the cut-off turns over all turns, the fraction of episodes with at least one cut-off, the overlong rate and accuracy conditioned on whether the episode has a cut-off, and the mean response tokens per turn (\p{rollout\_response\_tokens / num\_steps}).
+
+\begin{table}[h]\centering\footnotesize
+\caption{Thinking cut-offs by the 4{,}096-token per-turn cap, 9B GRPO-32K+think, greedy validation ($n=128$ episodes per checkpoint). ``$\mid$ cut-off'' / ``$\mid$ none'' condition on the episode having $\ge 1$ / 0 cut-off turns. Source: \p{fig7\_think\_cutoffs.csv}.}
+\label{tab:cutoff}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}rccccccc@{}}\toprule
+step & cut-off / all turns & episodes w/ cut-off & overlong $\mid$ cut-off & overlong $\mid$ none & acc $\mid$ cut-off & acc $\mid$ none & tokens / turn\\ \midrule
+0 & 24/5736 (0.4\%) & 6/128 (5\%) & 0.50 & 0.03 & 0.33 & 0.76 & 178\\
+10 & 90/5888 (1.5\%) & 23/128 (18\%) & 0.52 & 0.03 & 0.39 & 0.88 & 300\\
+20 & 188/6139 (3.1\%) & 39/128 (30\%) & 0.67 & 0.06 & 0.18 & 0.90 & 484\\
+30 & 187/6251 (3.0\%) & 45/128 (35\%) & 0.62 & 0.06 & 0.36 & 0.90 & 504\\
+40 & 193/5765 (3.3\%) & 41/128 (32\%) & 0.61 & 0.05 & 0.39 & 0.92 & 589\\
+50 & 154/5756 (2.7\%) & 41/128 (32\%) & 0.51 & 0.01 & 0.46 & 0.93 & 509\\
+60 & 236/4969 (4.7\%) & 50/128 (39\%) & 0.66 & 0.00 & 0.32 & 0.94 & 807\\
+70 & 179/5420 (3.3\%) & 44/128 (34\%) & 0.52 & 0.00 & 0.34 & 0.96 & 586\\
+80 & 129/5721 (2.3\%) & 37/128 (29\%) & 0.49 & 0.05 & 0.43 & 0.88 & 431\\
+90 & 119/5931 (2.0\%) & 34/128 (27\%) & 0.50 & 0.02 & 0.44 & 0.94 & 461\\
+100 & 62/5652 (1.1\%) & 33/128 (26\%) & 0.24 & 0.00 & 0.64 & 0.94 & 308\\
+\bottomrule\end{tabular}
+\end{table}
+
+\begin{figure}[h]\centering\includegraphics[width=\textwidth]{fig7_think_cutoffs.png}
+\caption{Thinking cut-offs by the per-turn cap for 9B GRPO-32K+think per checkpoint (greedy validation, $n=128$). Method: with \p{enable\_thinking} the generation prompt ends in \p{<think>\textbackslash n}, so every assistant turn starts inside a think block, and a turn whose thinking never closed has no \p{</think>}; per episode \p{cut\_off\_turns = num\_steps - output.count("</think>")} (clipped at 0). Left: cut-off turns over all turns (solid) and episodes with at least one cut-off (dashed), in percent. Right: overlong rate (red) and accuracy (blue) conditioned on the episode having a cut-off (solid) or none (dashed). Data: \p{fig7\_think\_cutoffs.csv}.}
+\label{fig:cutoff}\end{figure}
+
+Only a few percent of turns overrun the 4{,}096-token cap (0.4\% at step 0, 3.1\% at 20, 4.7\% at 60, 1.1\% at 100), but they concentrate in a third of the episodes (5\% $\to$ 30\% $\to$ 39\% $\to$ 26\%) and wreck them: each cut-off turn burns $\sim$4K of the 30{,}720-token response budget and yields no action, so episodes with a cut-off are overlong 50--67\% of the time against 0--6\% for the others, and score 0.18--0.46 against 0.88--0.96 (Table~\ref{tab:cutoff}). The cut-off rate tracks the thinking-length growth of Figure~\ref{fig:think} and the validation dip between steps 20 and 60, and its fall to 1.1\% by step 100 (with overlong $\mid$ cut-off down to 0.24) matches the recovery to 0.859.
+
+\emph{Ruled out.} The Qwen chat template drops earlier turns' \p{<think>} blocks when a conversation is re-rendered (the ``prefix-unstable'' behaviour), which could in principle remove thinking from the context or the training targets. That does not apply here: verl's continuous-token builder appends only rendered deltas and every generation call is fed the raw accumulated token stream (\p{supo/agent\_loop.py} \p{\_generate} passes \p{prompt\_ids=traj.token\_ids}; \p{verl/utils/tokenizer/continuous\_token.py} \p{\_merge\_context\_token\_ids}), so earlier thinking stays in the rollout context and in the training targets.
+
+\emph{Caveats.} The metric is not applicable to the non-thinking control (its empty \p{<think></think>} pair sits in the prompt, so the count trivially flags one turn per episode) nor to multi-segment SUPO episodes (the \p{output} field keeps only the final working-context segment). Single-segment SUPO+think episodes ($n=21$--48 per checkpoint, \p{summary.json}) show zero cut-offs: the 4K working context triggers a summary before a turn can reach the cap.
+
 \subsection{Training curves}
 \begin{figure}[h]\centering\includegraphics[width=\textwidth]{fig4_training_curves.png}
 \caption{Batch-level trainer metrics parsed from the \p{step:N - key:value} lines of each arm's trainer stdout (ray and ANSI prefixes stripped, last occurrence per step kept). Top left: mean training reward of the batch (\p{critic/score/mean}, 128 prompts $\times$ 8 rollouts at temperature 1). Top right: policy-gradient loss. Bottom left: policy entropy (\p{actor/entropy}). Bottom right: mean generated tokens per rollout (\p{response\_length/mean}). The 9B non-thinking curves start at step 36/40 (resumed pods, see deviations). The 32B policy has a much lower entropy from the start (0.13 $\to$ 0.05) than the 9B policies (0.26--0.43) and its response length grows steadily (2.3K $\to$ 5.1K tokens) as it learns to make more calls per episode (38.6 $\to$ 58.5 on validation). GRPO+think produces the longest rollouts (up to 10.6K tokens at step 58) and its entropy rises during the dip and falls again as thinking shortens. Data: \p{fig4\_training\_curves.csv}.}
@@ -168,6 +202,7 @@ Excerpts rendered by \p{pretty\_traj} in the builder script (tool outputs trunca
 
 \section{Discussion and limitations}
 \begin{itemize}[nosep]
+\item \textbf{Training thinking at 32K needs a stop condition that closes thinking}: a think budget separate from the answer budget, or a larger per-turn cap with the overlong mask kept (Section~\ref{sec:cutoff}).
 \item \textbf{Thinking is not free context.} With a fixed 32K window, a policy that thinks 3--14K tokens per episode leaves less room for tool calls and observations; GRPO's reward signal then pushes it to think less (Fig.~\ref{fig:think}), and only when it does does accuracy recover. SUPO's summaries hide the cost from the context but not from the policy: the thinking SUPO arm makes fewer calls and scores lower. On CodeGym, where the useful reasoning is a short plan followed by many cheap calls, thinking buys nothing at this scale.
 \item \textbf{Model comparison.} Qwen2.5-32B-Instruct is a weaker tool user than Qwen3.5-9B at step 0 on this set (0.52 vs.\ 0.77) and remains 3 points behind after 100 steps, but it is still improving and its per-task solution set differs (12 tasks only the 32B policy solves). Whether it overtakes the 9B model with more steps is untested.
 \item \textbf{Noise.} All validation numbers are single greedy runs on 128 tasks ($\pm0.035$ at $p=0.8$). Peaks and single-checkpoint differences below 0.05 should not be read as real; the 80--100 means and the full curves are the reliable summaries.
