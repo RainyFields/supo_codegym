@@ -40,6 +40,12 @@ env = {
     "MIN_GPUS": str(args.n_gpus),
     "N_GPUS": str(args.n_gpus),
     "NNODES": str(args.nodes),
+    # Data compliance (U13 SOP v3.0, skill data-compliance-tt): CodeGym is a public benchmark,
+    # no TikTok user data; GRPO/SUPO training via verl (pytorch), data on HDFS.
+    "MERLIN_JOB_INSTANCE_TYPE": "Train",
+    "HAS_TT_DATA": "False",
+    "ML_FRAMEWORK": "pytorch",
+    "STORAGE_TYPE": "HDFS",
 }
 for kv in filter(None, args.extra_env.split(",")):
     k, v = kv.split("=", 1)
