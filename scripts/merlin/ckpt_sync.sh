@@ -140,6 +140,7 @@ ckpt_restore() {
   local bsrc=$( (cd "$src" && find . -type f ! -name '.COMPLETE*' | sed 's|^\./||') | while read -r f; do _mine "$f" && stat -c %s "$src/$f"; done | awk '{s+=$1}END{printf "%.0f\n", s}') bdst=$(find "$dst" -type f -printf '%s\n' | awk '{s+=$1}END{printf "%.0f\n", s}')
   [ "$bsrc" = "$bdst" ] || { _log "RESTORE VERIFY FAILED ($bsrc vs $bdst bytes) -> fresh start"; rm -rf "$dst"; return 0; }
   echo "$n" > "$CKPT_DIR/latest_checkpointed_iteration.txt"
+  export RESTORED_STEP=$n   # the sync loop must never delete this local dir: verl loads it minutes later
   _log "restored global_step_$n in $(( $(date +%s)-t0 )) s -> verl resume_mode=auto will pick it up"
 }
 
@@ -172,7 +173,10 @@ ckpt_sync_loop() {  # background; stops when $SYNC_STOP_FILE exists and everythi
         # free pod-local disk (shared nodes had only ~250 GB free): the verified HDFS copy is the
         # source of truth; a restart restores it via ckpt_restore. verl's keep=1 pruning tolerates
         # already-missing older dirs.
-        [ "${LOCAL_DELETE_AFTER_SYNC:-1}" = 1 ] && { rm -rf "$CKPT_DIR/global_step_$n" && _log "removed local global_step_$n after verified upload"; }
+        # never delete the step we just restored: rerun cb6a9054e974b923 re-uploaded it and deleted the local copy
+        # at 16:23:10 while verl was still loading it (FileNotFoundError in trainer _setup). verl's own keep=1
+        # rotation removes it at the next save.
+        if [ "${LOCAL_DELETE_AFTER_SYNC:-1}" = 1 ] && [ "$n" != "${RESTORED_STEP:-}" ]; then rm -rf "$CKPT_DIR/global_step_$n" && _log "removed local global_step_$n after verified upload"; fi
       fi
     elif [ -f "${SYNC_STOP_FILE:-/tmp/supo_sync_stop}" ]; then
       _log "sync loop exiting (last synced global_step_$last)"; return 0
