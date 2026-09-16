@@ -92,6 +92,17 @@ User asked to recover the lost SUPO final weights. Approach: continue from the o
 `RESTORE_FROM_EXP=<exp>` (commit 26244a4): when the rerun's own checkpoint dir has no complete step, the pod
 restores from `checkpoints/<exp>/` directly (bash dynamic scoping; the mirror loop still writes only to the
 rerun dir, so the source is never pruned). Job: `jobs/supo_rerun_h100.json` (1×8 H100, SAVE_FREQ 10, THINK 0),
-sid **3d645925cb1c719f** (also in `/tmp/supo_stage/supo_rerun_sid.txt`, `jobs/JOBS.tsv`). Expect ~40 min
+sid **081da6273ef00a63** (rerun #3; #1 3d645925cb1c719f: CLI restore SIGPIPE -> fresh start, fixed 7908bef; #2 cb6a9054e974b923: sync loop deleted the freshly restored local step while verl loaded it, fixed b08be7d; the rerun dir now holds its own complete step 40) (also in `/tmp/supo_stage/supo_rerun_sid.txt`, `jobs/JOBS.tsv`). Expect ~40 min
 restore + ~7 h for steps 41–100; final weights at `checkpoints/supo_codegym_qwen35-9b_4kx8_rerun/global_step_100`
 with `.COMPLETE`; val in `outputs/supo_codegym_qwen35-9b_4kx8_rerun/val/`; logs `job-runs/supo_rerun/`.
+
+### Open item found during the rerun (Sep 16, 16:40) — mirror uploads twice
+`checkpoints/supo_codegym_qwen35-9b_4kx8_rerun/global_step_40` holds 63 files / 211 GB: a full top-level copy
+AND a nested `global_step_40.tmp/` copy. Cause (single-node `_upload_dir`): the CLI branch puts files to the
+FINAL uri (`$HDFS_CKPT_URI/global_step_N`), then reports "cli upload had failures ()" (puts exit non-zero with
+empty stderr although the files land), the fuse fallback copies into `global_step_N.tmp`, and the final
+`mv .tmp final` lands INSIDE the already-existing final dir. Data is valid (verl loads the top level; restore
+verify passes because it compares whole trees) but every upload moves 2x the bytes and restores copy 2x.
+The 32B run's "fuse fallback at 400–460 MB/s" was very likely the same double write. Fix when convenient:
+put to the `.tmp` uri in the CLI branch and judge success by the byte verify, not the put exit codes; then
+delete the nested `global_step_40.tmp` (fuse rm -rf is unreliable; use the hdfs CLI from a pod).
