@@ -83,3 +83,15 @@ python scripts/merlin/make_job_spec.py --arm grpo --gpu h100 --nodes 2 --extra_e
 bash /tmp/supo_stage/stage_small.sh                          # re-stage repo tarball + entrypoint after ANY script change (devbox-local script; recreate from the handoff if /tmp is gone)
 ~/.merlin-cli/bin/merlin-cli --control-plane i18n-tt job-v2 runs create --from-file jobs/<name>.json
 ```
+
+## 7. Addendum — SUPO-4K×8 rerun to recover final weights (Sep 16, 15:45)
+User asked to recover the lost SUPO final weights. Approach: continue from the original run's complete
+`global_step_40` (the same lineage run 5 resumed from; verl restores the dataloader position) under a NEW exp
+`supo_codegym_qwen35-9b_4kx8_rerun` so the original dumps stay intact. The devbox hdfs CLI could not copy the
+113 GB checkpoint ("Protocol family unavailable" on every JVM flag), so instead `ckpt_restore` gained
+`RESTORE_FROM_EXP=<exp>` (commit 26244a4): when the rerun's own checkpoint dir has no complete step, the pod
+restores from `checkpoints/<exp>/` directly (bash dynamic scoping; the mirror loop still writes only to the
+rerun dir, so the source is never pruned). Job: `jobs/supo_rerun_h100.json` (1×8 H100, SAVE_FREQ 10, THINK 0),
+sid **3d645925cb1c719f** (also in `/tmp/supo_stage/supo_rerun_sid.txt`, `jobs/JOBS.tsv`). Expect ~40 min
+restore + ~7 h for steps 41–100; final weights at `checkpoints/supo_codegym_qwen35-9b_4kx8_rerun/global_step_100`
+with `.COMPLETE`; val in `outputs/supo_codegym_qwen35-9b_4kx8_rerun/val/`; logs `job-runs/supo_rerun/`.
