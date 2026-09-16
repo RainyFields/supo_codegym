@@ -100,6 +100,14 @@ _prune_hdfs() {
 ckpt_restore() {
   mkdir -p "$CKPT_DIR" "$HDFS_CKPT"
   SYNC_MODE=${SYNC_MODE_FORCE:-cli}; [ "$SYNC_MODE" = cli ] && ! _hdfs_ok && { SYNC_MODE=fuse; _log "hdfs CLI unavailable -> fuse mode"; }; export SYNC_MODE
+  # RESTORE_FROM_EXP=<other exp name>: when THIS exp has no complete checkpoint yet, restore from that exp's
+  # HDFS dir instead (continuation runs, e.g. the SUPO rerun from the original run's global_step_40). bash
+  # `local` is dynamically scoped, so _complete_steps/_is_complete below see the override; the mirror loop
+  # (called later, outside this function) keeps using this exp's own dir, so the source is never pruned.
+  if [ -n "${RESTORE_FROM_EXP:-}" ] && [ -z "$(_complete_steps | tail -1)" ]; then
+    local HDFS_CKPT="${HDFS_CKPT%/*}/$RESTORE_FROM_EXP" HDFS_CKPT_URI="${HDFS_CKPT_URI%/*}/$RESTORE_FROM_EXP"
+    _log "no checkpoint in this exp; restoring from $RESTORE_FROM_EXP ($HDFS_CKPT)"
+  fi
   local n=$(cat "$HDFS_CKPT/latest_synced.txt" 2>/dev/null || echo 0)
   # fall back to the newest .COMPLETE dir if the pointer is missing
   [ "$n" -gt 0 ] 2>/dev/null || n=$(_complete_steps | tail -1)
