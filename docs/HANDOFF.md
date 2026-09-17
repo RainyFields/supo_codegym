@@ -106,3 +106,32 @@ verify passes because it compares whole trees) but every upload moves 2x the byt
 The 32B run's "fuse fallback at 400–460 MB/s" was very likely the same double write. Fix when convenient:
 put to the `.tmp` uri in the CLI branch and judge success by the byte verify, not the put exit codes; then
 delete the nested `global_step_40.tmp` (fuse rm -rf is unreliable; use the hdfs CLI from a pod).
+
+## 8. Addendum — status check + double-upload fix (Sep 16, 21:35 PDT, session resumed from this file)
+Rerun #3 `081da6273ef00a63` (trial 303175001) is **running and healthy**: restored the rerun dir's own step 40 in
+398 s (16:41), then ~90 min per 10 steps. HDFS at 21:30: complete steps 60 + 70 (40/50 pruned, keep=2),
+val dumps 40–70, rollouts up to step 71. Step 100 + final mirror expected **~02:00 PDT Sep 17**; the queue
+(`compute-89-aliyun...ark.eng.algorithm-guarantee`) has NOT reclaimed the pod across two 4-h UTC marks.
+`FAILED.303174679` in `job-runs/supo_rerun/` is rerun #2's trial (the local-delete race), not this job.
+
+Val so far (greedy pass@1, 128 tasks), rerun vs original — the two runs share the step-40 weights:
+| step | rerun | original |
+|---|---|---|
+| 40 | .719 | .758 |
+| 50 | .820 | .734 |
+| 60 | .742 | .766 |
+| 70 | .781 | .828 |
+Same weights at step 40 differ by 5 tasks: that is the eval noise floor of greedy vLLM + 26-call tool
+trajectories on this split (worth quoting when comparing arms that differ by <5 pts).
+
+**Double-upload bug fixed** (branch `worktree-ckpt-sync-double-upload`, NOT yet merged, NOT yet staged):
+`_upload_dir` now puts to the `.tmp` uri, treats the put exit codes as informational only (they are non-zero
+with empty stderr on the ark pods although every file lands), judges success by the byte verify, and on a
+verify miss copies ONLY the missing/mismatched files through fuse (`_fuse_fill`). `_prune_hdfs` also sweeps
+the nested `global_step_N/global_step_N.tmp` artefact. Regression harness with a fake `hdfs` shim:
+`bash scripts/merlin/tests/test_ckpt_sync_upload.sh [old_script]` — old script: 16 files vs 8 + nested .tmp
+(the bug), new script: all 12 checks pass. NOT re-staged on purpose: `stage_small.sh` would swap the tarball
+that the running job restores from on any auto-resume. **After the rerun finishes**: merge the branch, run
+`bash /tmp/supo_stage/stage_small.sh`, and (optional) reclaim ~100 GB/step by deleting the nested
+`global_step_{60,70,100}.tmp` copies in `checkpoints/supo_codegym_qwen35-9b_4kx8_rerun/` (fuse `rm -rf` is
+unreliable; the next job on that exp dir does it via the CLI sweep, or use the hdfs CLI from any pod).

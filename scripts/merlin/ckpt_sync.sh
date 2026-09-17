@@ -31,7 +31,14 @@ _rm_retry() {
 _fuse_copy() { mkdir -p "$2" && cp -r "$1/." "$2/"; }   # copy contents; safe when dst already exists
 _fuse_copy_mine() { local f; (cd "$1" && find . -type f ! -name '.COMPLETE*' | sed 's|^\./||') | while read -r f; do _mine "$f" || continue; mkdir -p "$2/$(dirname "$f")"; cp "$1/$f" "$2/$f"; done; }
 
-# copy one local global_step dir to HDFS (parallel per-file puts via CLI; fuse cp fallback)
+# copy only the files that are missing or size-mismatched at dst. Overwriting good files through fuse is very
+# slow (run #5) and re-copying a whole step doubles the bytes moved, so the fallback never touches files that
+# already verify.
+_fuse_fill() { local f n=0; for f in $(cd "$1" && find . -type f | sed 's|^\./||'); do
+    [ "$(stat -c %s "$2/$f" 2>/dev/null)" = "$(stat -c %s "$1/$f")" ] && continue
+    mkdir -p "$2/$(dirname "$f")"; cp "$1/$f" "$2/$f" && n=$((n+1)); done; _log "fuse fill copied $n file(s)"; }
+
+# copy one local global_step dir to HDFS (parallel per-file puts via CLI; fuse fill of whatever is missing)
 _upload_dir() {  # $1 = step N
   local n=$1 src="$CKPT_DIR/global_step_$1" dst="$HDFS_CKPT/global_step_$1" uri="$HDFS_CKPT_URI/global_step_$1"
   [ -d "$src" ] || { _log "src vanished: $src"; return 1; }
@@ -44,39 +51,53 @@ _upload_dir() {  # $1 = step N
     [ -e "$dst" ] && { mv "$dst" "$dst.stale.$(date +%s)" 2>/dev/null && _log "moved leftover $dst aside" || { _log "cannot clear $dst"; return 1; }; }
   fi
   local final="$dst"
-  if [ "${NNODES:-1}" -gt 1 ]; then mkdir -p "$dst"; else dst="$dst.tmp"; rm -rf "$dst" 2>/dev/null; mv "$dst" "$dst.stale.$(date +%s)" 2>/dev/null; fi
+  # Single node: stage in global_step_N.tmp and rename when verified. The CLI puts MUST target the same .tmp
+  # uri: until 2026-09-16 they targeted the final uri, so the (spurious, see below) fuse fallback copied a
+  # second full tree into .tmp and the rename landed it INSIDE the final dir (211 GB per step instead of 113,
+  # nested global_step_N/global_step_N.tmp; every restore then copied both).
+  if [ "${NNODES:-1}" -gt 1 ]; then mkdir -p "$dst"; else dst="$dst.tmp"; uri="$uri.tmp"; rm -rf "$dst" 2>/dev/null; mv "$dst" "$dst.stale.$(date +%s)" 2>/dev/null; fi
+  local ndst bdst
+  _upload_verify() {  # sets ndst/bdst; true when every src file is at dst with the same total size
+    if [ "${NNODES:-1}" -gt 1 ]; then   # shared dir: count only this node's files (other nodes write there too)
+      ndst=0; bdst=0; for f in $(cd "$src" 2>/dev/null && find . -type f | sed 's|^\./||'); do [ -f "$dst/$f" ] && { ndst=$((ndst+1)); bdst=$((bdst + $(stat -c %s "$dst/$f"))); }; done
+    else
+      ndst=$(find "$dst" -type f 2>/dev/null | wc -l); bdst=$(find "$dst" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1}END{printf "%.0f\n", s}')
+    fi
+    [ "$nsrc" = "$ndst" ] && [ "$bytes" = "$bdst" ]
+  }
   if [ "${SYNC_MODE:-cli}" = cli ]; then
     # per-file put with 3 attempts alternating the JVM IP-stack flags (datanodes answer on IPv4 or
     # IPv6 and the JVM picks one stack; "Protocol family unavailable" is the symptom). First error kept.
+    # The put exit codes are NOT the verdict: on the ark pods `dfs -put` exits non-zero with empty stderr
+    # although the file lands (every upload of the 32B run and the SUPO rerun logged "cli upload had
+    # failures ()"). Success is judged by the byte verify below; only what is missing is then fuse-copied.
     export _PUT_SRC="$src" _PUT_URI="$uri" _PUT_ERR="/tmp/supo_put_err.$$"; rm -f "$_PUT_ERR"
-    ( cd "$src" && find . -type d | sed 's|^\./||' | grep -v '^\.$' | sed "s|^|$uri/|" | xargs -r "$H" dfs -mkdir -p >/dev/null 2>&1
+    local nfail=$( ( cd "$src" && find . -type d | sed 's|^\./||' | grep -v '^\.$' | sed "s|^|$uri/|" | xargs -r "$H" dfs -mkdir -p >/dev/null 2>&1
       find . -type f | sed 's|^\./||' | xargs -r -P $PUT_PAR -I{} bash -c '
         f="$1"; H="$2"; ok=0
         for flags in "-Djava.net.preferIPv4Stack=false -Djava.net.preferIPv6Addresses=true" "-Djava.net.preferIPv4Stack=true" "-Djava.net.preferIPv4Stack=false -Djava.net.preferIPv6Addresses=true"; do
           HADOOP_OPTS="$flags" HADOOP_CLIENT_OPTS="$flags" timeout ${PUT_TIMEOUT:-900} "$H" dfs -put -f "$_PUT_SRC/$f" "$_PUT_URI/$f" >/tmp/supo_put_$$.log 2>&1 && { ok=1; break; }
           [ -s "$_PUT_ERR" ] || grep -v "lock\|WARN\|^\s*at " /tmp/supo_put_$$.log | tail -2 > "$_PUT_ERR"
-        done; rm -f /tmp/supo_put_$$.log; [ $ok = 1 ] || echo "PUTFAIL $f"' _ {} "$H" ) | grep -c PUTFAIL | grep -q '^0$' || { _log "cli upload had failures ($(head -c 300 "$_PUT_ERR" 2>/dev/null | tr '\n' ' ')), falling back to fuse cp"; _fuse_copy "$src" "$dst"; }
+        done; rm -f /tmp/supo_put_$$.log; [ $ok = 1 ] || echo "PUTFAIL $f"' _ {} "$H" ) | grep -c PUTFAIL )
+    [ "${nfail:-0}" = 0 ] || _log "cli upload: $nfail put(s) exited non-zero ($(head -c 300 "$_PUT_ERR" 2>/dev/null | tr '\n' ' ')); judging by the byte verify"
+    rm -f "$_PUT_ERR"
   else
     _fuse_copy "$src" "$dst"
   fi
-  local ndst bdst
+  if ! _upload_verify; then
+    _log "upload incomplete after ${SYNC_MODE:-cli} (files $nsrc vs $ndst, bytes $bytes vs $bdst): fuse-filling the missing files"
+    _fuse_fill "$src" "$dst"
+    _upload_verify || { _log "VERIFY FAILED global_step_$n: files $nsrc vs $ndst, bytes $bytes vs $bdst"; return 1; }
+  fi
   if [ "${NNODES:-1}" -gt 1 ]; then
-    ndst=0; bdst=0; for f in $(cd "$src" 2>/dev/null && find . -type f | sed 's|^\./||'); do [ -f "$dst/$f" ] && { ndst=$((ndst+1)); bdst=$((bdst + $(stat -c %s "$dst/$f"))); }; done
+    touch "$dst/.COMPLETE.${NODE_RANK:-0}"
+    _is_complete "$dst" && echo "$n" > "$HDFS_CKPT/latest_synced.txt"
   else
-    ndst=$(find "$dst" -type f 2>/dev/null | wc -l); bdst=$(find "$dst" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1}END{printf "%.0f\n", s}')
+    mv "$dst" "$final" || { _log "rename $dst -> $final FAILED"; return 1; }; dst="$final"
+    touch "$dst/.COMPLETE"; echo "$n" > "$HDFS_CKPT/latest_synced.txt"
   fi
-  if [ "$nsrc" = "$ndst" ] && [ "$bytes" = "$bdst" ]; then
-    if [ "${NNODES:-1}" -gt 1 ]; then
-      touch "$dst/.COMPLETE.${NODE_RANK:-0}"
-      _is_complete "$dst" && echo "$n" > "$HDFS_CKPT/latest_synced.txt"
-    else
-      mv "$dst" "$final" || { _log "rename $dst -> $final FAILED"; return 1; }; dst="$final"
-      touch "$dst/.COMPLETE"; echo "$n" > "$HDFS_CKPT/latest_synced.txt"
-    fi
-    _log "uploaded global_step_$n: $((bytes/1000000)) MB in $(( $(date +%s)-t0 )) s ($(( bytes/1000000/($(date +%s)-t0+1) )) MB/s, $nsrc files)"
-    return 0
-  fi
-  _log "VERIFY FAILED global_step_$n: files $nsrc vs $ndst, bytes $bytes vs $bdst"; return 1
+  _log "uploaded global_step_$n: $((bytes/1000000)) MB in $(( $(date +%s)-t0 )) s ($(( bytes/1000000/($(date +%s)-t0+1) )) MB/s, $nsrc files)"
+  return 0
 }
 
 _prune_hdfs() {
@@ -85,8 +106,9 @@ _prune_hdfs() {
   # 7 of them). The newest dir is never touched here (it may be mid-upload).
   local latest_complete=$(_complete_steps | tail -1)
   local newest=$(ls -d "$HDFS_CKPT"/global_step_* 2>/dev/null | grep -E 'global_step_[0-9]+$' | sed 's/.*global_step_//' | sort -n | tail -1)
-  # stale/tmp leftovers (fuse cannot rm -rf them): try the CLI, ignore failures
-  for d in "$HDFS_CKPT"/global_step_*.stale.* "$HDFS_CKPT"/global_step_*.tmp; do [ -e "$d" ] && _rm_retry "$d" >/dev/null 2>&1; done
+  # stale/tmp leftovers (fuse cannot rm -rf them): try the CLI, ignore failures. The nested global_step_N/global_step_N.tmp
+  # pattern is the double-upload artefact of the pre-2026-09-16 _upload_dir (never valid data: verl reads the top level).
+  for d in "$HDFS_CKPT"/global_step_*.stale.* "$HDFS_CKPT"/global_step_*.tmp "$HDFS_CKPT"/global_step_*/global_step_*.tmp; do [ -e "$d" ] && _rm_retry "$d" >/dev/null 2>&1; done
   ls -d "$HDFS_CKPT"/global_step_* 2>/dev/null | grep -E 'global_step_[0-9]+$' | sed 's/.*global_step_//' | sort -n | while read -r n; do
     [ "$n" = "$newest" ] && continue
     if _is_complete "$HDFS_CKPT/global_step_$n"; then
